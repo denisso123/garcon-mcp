@@ -28,7 +28,12 @@ const cases = [
   ['find_cocktails_by_ingredients', { ingredients: ['aperol', 'prosecco', 'soda water', 'orange juice'], strength: 'zero_or_low' },
     (out) => out.cocktails.length > 0 && out.cocktails.every((c) => LOW.has(c.strength))],
   ['find_cocktails_by_ingredients', { ingredients: ['vermouth', 'gin'] },
-    (out) => out.bar.recognised.find((t) => t.you_said === 'vermouth')?.one_of === true],
+    (out) => {
+      const vermouth = out.bar.recognised.find((t) => t.you_said === 'vermouth')
+      const cards = [...out.cocktails, ...out.low_proof_options]
+      return vermouth?.matched_as.length === 0 && vermouth.could_be?.length === 2 &&
+        cards.every((c) => !c.have.some((name) => /vermouth/i.test(name)) && (!c.depends_on?.length || !c.can_make_now))
+    }],
   ['find_cocktails_by_ingredients', { ingredients: ['rum', 'pineapple juice', 'lime'], flavors: ['tropical'] },
     (out) => Array.isArray(out.cocktails)],
   ['find_cocktails_by_ingredients', { ingredients: ['xyzzy'] }, (out) => out.bar.not_recognised.includes('xyzzy')],

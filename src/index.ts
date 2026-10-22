@@ -2,7 +2,13 @@
 // MCP requests pass the cheap checks (route, method, content type, declared
 // size, IP limit) before the body is read, and the body is read once.
 
-import { createMcpHandler, isJsonContentType, readRequestBody } from '@modelcontextprotocol/server'
+import {
+  createMcpHandler,
+  isJsonContentType,
+  localhostAllowedOrigins,
+  originValidationResponse,
+  readRequestBody,
+} from '@modelcontextprotocol/server'
 import { LANDING_HTML, PRIVACY_HTML } from './pages'
 import { type HostProfile, createServer } from './server'
 import { Upstream } from './upstream'
@@ -26,6 +32,18 @@ const ROUTES = new Map<string, HostProfile>([
 ])
 
 const MAX_BODY_BYTES = 64 * 1024
+
+// Origin policy (MCP Streamable HTTP: servers must validate Origin,
+// https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+// ChatGPT and Claude call this server from their own backends, so their
+// requests carry no Origin: "Claude connects to your remote MCP server from
+// Anthropic's cloud infrastructure" (https://support.claude.com/en/articles/11175166),
+// and ChatGPT apps and connectors call from OpenAI's published egress ranges
+// (https://developers.openai.com/api/docs/guides/ip-addresses). A request
+// without Origin passes. Browser origins are refused except localhost, for
+// the MCP Inspector and the widget harness during development; the widget
+// itself never calls the server (its CSP has no connect domains).
+const ALLOWED_ORIGINS = localhostAllowedOrigins()
 
 // The server is public, read-only and uses no cookies, so any origin may call it.
 const CORS_HEADERS: Record<string, string> = {
@@ -86,21 +104,49 @@ function subjectOf(body: unknown) {
   return typeof subject === 'string' && subject.length > 0 && subject.length <= 200 ? subject : null
 }
 
+/** Best effort: release a body we will not read. A failing cancel must not escape. */
+function discardBody(request: Request) {
+  try {
+    request.body?.cancel().catch(() => undefined)
+  } catch {
+    // Already locked or consumed.
+  }
+}
+
 async function serveMcp(request: Request, env: Env, ctx: ExecutionContext, profile: HostProfile) {
+  const refused = originValidationResponse(request, ALLOWED_ORIGINS)
+  if (refused) {
+    discardBody(request)
+    return refused
+  }
   if (request.method === 'OPTIONS') return new Response(null, { status: 204 })
   if (request.method !== 'POST') {
+    discardBody(request)
     return jsonRpcError(405, null, -32000, 'Method not allowed.', { allow: 'POST, OPTIONS' })
   }
   if (!isJsonContentType(request.headers.get('content-type'))) {
+    discardBody(request)
     return jsonRpcError(415, null, -32000, 'Content-Type must be application/json.')
   }
-  const tooLarge = () => jsonRpcError(413, null, -32000, 'Request body is too large.')
+  const tooLarge = () => {
+    discardBody(request)
+    return jsonRpcError(413, null, -32000, 'Request body is too large.')
+  }
   if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) return tooLarge()
 
   const ip = request.headers.get('cf-connecting-ip') ?? 'unknown'
-  if (!(await allowed(env.IP_LIMITER, `ip:${ip}`))) return tooManyRequests(null)
+  if (!(await allowed(env.IP_LIMITER, `ip:${ip}`))) {
+    discardBody(request)
+    return tooManyRequests(null)
+  }
 
-  const read = await readRequestBody(request, MAX_BODY_BYTES)
+  let read: Awaited<ReturnType<typeof readRequestBody>>
+  try {
+    read = await readRequestBody(request, MAX_BODY_BYTES)
+  } catch {
+    discardBody(request)
+    return jsonRpcError(400, null, -32000, 'The request body could not be read.')
+  }
   if (read.tooLarge) return tooLarge()
   let body: unknown
   try {

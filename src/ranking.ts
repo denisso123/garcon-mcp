@@ -98,26 +98,40 @@ export function candidatesFromGroups(
   )
 }
 
+export interface Dependency {
+  readonly ingredient: string
+  readonly you_said: string
+}
+
 interface BarComparison {
   readonly have: string[]
   readonly missing: string[]
+  /** Covered only if a vague bottle ("vermouth") is the right kind. Never in `have`. */
+  readonly dependsOn: Dependency[]
   readonly missingGarnish: string[]
 }
 
 const GARNISH_GROUP = normalize('Garnishes & Decorative Elements')
 
+/** The catalogue names a bar definitely owns. */
+export function definiteNames(bar: readonly ResolvedTerm[]) {
+  return new Set(bar.flatMap((term) => term.matched_as.map(normalize)))
+}
+
 /**
- * Which required ingredients the bar covers, matching each ingredient to a
- * bar term. A one-bottle term (`one_of`) covers at most one ingredient, so
- * "vermouth" never covers both sweet and dry vermouth; other terms cover any
- * number. Optional ingredients and staples never count; garnishes are
- * reported apart and do not block "can make now".
+ * Which required ingredients the bar covers. A definite name covers every
+ * ingredient with that name. A vague bottle (`could_be`) covers at most one
+ * ingredient, and only conditionally: it goes to `dependsOn`, so it is never
+ * owned and never makes a drink complete on its own. Optional ingredients
+ * and staples never count; garnishes are reported apart and do not block a
+ * match.
  */
 export function compareWithBar(recipe: RawRecipe, bar: readonly ResolvedTerm[]): BarComparison {
-  const keys = (term: ResolvedTerm) => new Set(term.matched_as.map(normalize))
-  const shared = new Set(bar.filter((term) => !term.one_of).flatMap((term) => [...keys(term)]))
-  const bottles = bar.filter((term) => term.one_of).map(keys)
-  const anyTerm = new Set([...shared, ...bottles.flatMap((names) => [...names])])
+  const definite = definiteNames(bar)
+  const bottles = bar
+    .filter((term) => term.could_be?.length)
+    .map((term) => ({ you_said: term.you_said, names: new Set((term.could_be ?? []).map(normalize)) }))
+  const anyTerm = new Set([...definite, ...bottles.flatMap((bottle) => [...bottle.names])])
 
   const required: string[] = []
   const missingGarnish: string[] = []
@@ -131,21 +145,30 @@ export function compareWithBar(recipe: RawRecipe, bar: readonly ResolvedTerm[]):
     }
   }
 
-  const covered = required.map((name) => shared.has(normalize(name)))
+  const covered = required.map((name) => definite.has(normalize(name)))
   const open = required.flatMap((_, index) => (covered[index] ? [] : [index]))
-  for (const slot of assignBottles(open.map((index) => normalize(required[index])), bottles)) {
-    covered[open[slot]] = true
-  }
+  const holders = assignBottles(
+    open.map((index) => normalize(required[index])),
+    bottles.map((bottle) => bottle.names)
+  )
+  const dependsOn: Dependency[] = []
+  const conditional = new Set<number>()
+  holders.forEach((slot, bottle) => {
+    if (slot === -1) return
+    conditional.add(open[slot])
+    dependsOn.push({ ingredient: required[open[slot]], you_said: bottles[bottle].you_said })
+  })
   return {
     have: required.filter((_, index) => covered[index]),
-    missing: required.filter((_, index) => !covered[index]),
+    missing: required.filter((_, index) => !covered[index] && !conditional.has(index)),
+    dependsOn,
     missingGarnish,
   }
 }
 
 /**
- * The most ingredients one-bottle terms can cover, each bottle used once
- * (augmenting paths). Returns the indexes of the covered ingredients.
+ * The most ingredients vague bottles can stand in for, each bottle used once
+ * (augmenting paths). Returns, per bottle, the ingredient it covers or -1.
  */
 function assignBottles(ingredients: readonly string[], bottles: readonly ReadonlySet<string>[]) {
   const holder = new Array<number>(bottles.length).fill(-1)
@@ -158,7 +181,7 @@ function assignBottles(ingredients: readonly string[], bottles: readonly Readonl
       return true
     })
   ingredients.forEach((_, ingredient) => place(ingredient, new Set()))
-  return new Set(holder.filter((ingredient) => ingredient !== -1))
+  return holder
 }
 
 export interface Match {
@@ -166,11 +189,12 @@ export interface Match {
   readonly comparison: BarComparison
 }
 
-/** Best first: fewest missing, then more of the bar used, then API order. */
+/** Best first: fewest missing, then fewest that depend on a vague bottle, then more of the bar used, then API order. */
 export function rankMatches(matches: readonly Match[]): Match[] {
   return [...matches].sort(
     (a, b) =>
       a.comparison.missing.length - b.comparison.missing.length ||
+      a.comparison.dependsOn.length - b.comparison.dependsOn.length ||
       b.comparison.have.length - a.comparison.have.length ||
       a.candidate.order - b.candidate.order
   )
@@ -178,32 +202,54 @@ export function rankMatches(matches: readonly Match[]): Match[] {
 
 const BATCH_SIZE = 8
 
+export interface BestMatches {
+  readonly matches: Match[]
+  /** False when `maxChecked` ran out while an unchecked candidate could still rank in the top. */
+  readonly complete: boolean
+}
+
 /**
- * The top `limit` matches, comparing candidates in batches, best estimate
- * first, and stopping early once no unchecked candidate can miss fewer
- * ingredients than the ones already chosen.
- *
- * The API counts a missing garnish as missing and this server does not, so a
- * candidate can miss one fewer ingredient than its group says. That assumes
- * at most one garnish per recipe, true of the 200 most popular free recipes
- * on 22 Oct 2026. Recipes that use nothing from the bar are dropped.
+ * Whether an unchecked candidate could rank above `worst` under rankMatches.
+ * The bound is the best it could possibly score: nothing missing and nothing
+ * conditional (the API's group says little, since it counts garnishes and
+ * optional items), and at most as many owned ingredients as the bar has
+ * names or the recipe has ingredients. API order is known exactly.
+ */
+function couldBeat(candidate: GroupCandidate, worst: Match, haveCeiling: number) {
+  if (worst.comparison.missing.length > 0 || worst.comparison.dependsOn.length > 0) return true
+  const haveMax = Math.min(haveCeiling, candidate.preview.ingredientCount ?? Number.POSITIVE_INFINITY)
+  if (haveMax !== worst.comparison.have.length) return haveMax > worst.comparison.have.length
+  return candidate.order < worst.candidate.order
+}
+
+/**
+ * The top `limit` matches. Candidates are compared in batches, best estimate
+ * first, and only while one of them could still enter the top under the full
+ * ranking; the answer is complete when none can. When `maxChecked` stops the
+ * search before that is proven, the result says so.
+ * Recipes that use nothing from the bar are dropped.
  */
 export async function bestMatches(
   candidates: readonly GroupCandidate[],
   limit: number,
   maxChecked: number,
-  compare: (batch: readonly GroupCandidate[]) => Promise<Match[]>
-): Promise<Match[]> {
-  const end = Math.min(candidates.length, maxChecked)
+  compare: (batch: readonly GroupCandidate[]) => Promise<Match[]>,
+  haveCeiling: number
+): Promise<BestMatches> {
   const found: Match[] = []
   let top: Match[] = []
-  for (let checked = 0; checked < end; checked += BATCH_SIZE) {
-    const next = candidates[checked]
-    const floor = Math.max(0, next.apiMissing - 1)
-    if (top.length === limit && top.every((match) => match.comparison.missing.length <= floor)) break
-    const batch = await compare(candidates.slice(checked, Math.min(checked + BATCH_SIZE, end)))
-    found.push(...batch.filter((match) => match.comparison.have.length > 0))
+  let pending = [...candidates]
+  let checked = 0
+  for (;;) {
+    const worst = top.length === limit ? top[top.length - 1] : null
+    if (worst) pending = pending.filter((candidate) => couldBeat(candidate, worst, haveCeiling))
+    if (pending.length === 0) return { matches: top, complete: true }
+    if (checked >= maxChecked) return { matches: top, complete: false }
+    const batch = pending.slice(0, Math.min(BATCH_SIZE, maxChecked - checked))
+    pending = pending.slice(batch.length)
+    checked += batch.length
+    const compared = await compare(batch)
+    found.push(...compared.filter((match) => match.comparison.have.length > 0 || match.comparison.dependsOn.length > 0))
     top = rankMatches(found).slice(0, limit)
   }
-  return top
 }

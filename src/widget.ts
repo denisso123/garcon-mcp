@@ -83,9 +83,12 @@ function garconView(config) {
     if (item.can_make_now) tags += tag('Ready to make', 'ok');
     if (lowProof && item.strength) tags += tag(strengthLabel(item.strength));
     (item.flavors || []).slice(0, lowProof ? 2 : 3).forEach(function (flavor) { tags += tag(flavor); });
-    var need = !item.can_make_now && item.missing && item.missing.length
-      ? '<span class="need">Missing ' + esc(words(item.missing)) + '</span>'
-      : '';
+    var notes = [];
+    if (!item.can_make_now && item.missing && item.missing.length) notes.push('Missing ' + words(item.missing));
+    (item.depends_on || []).forEach(function (d) {
+      if (d && d.ingredient && d.you_said) notes.push('Only if your ' + d.you_said + ' is ' + d.ingredient);
+    });
+    var need = notes.length ? '<span class="need">' + esc(notes.join('. ')) + '</span>' : '';
     var thumb = img
       ? '<span class="thumb"><img src="' + esc(img) + '" alt="" width="64" height="64" loading="lazy" decoding="async"></span>'
       : '<span class="thumb empty-thumb">' + config.mascot + '</span>';
@@ -138,6 +141,7 @@ function garconView(config) {
       if (notRecognised.length) html += '<p class="aside">Not recognised: ' + esc(words(notRecognised)) + '</p>';
     }
     if (data.unavailable && data.unavailable.length) html += '<p class="aside">Low or zero-proof options could not load this time.</p>';
+    if (data.partial) html += '<p class="aside">Garçon checked the closest recipes first; more may match on fixmeadrinkapp.com.</p>';
     return html + footer();
   }
 

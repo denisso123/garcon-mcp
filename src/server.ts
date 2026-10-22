@@ -115,6 +115,8 @@ export function createServer(up: Upstream, profile: HostProfile = 'default') {
         'Finds cocktails the user can make from the bottles and ingredients they already have, using the Garçon recipe catalogue. ' +
         'Use it when the user lists what is in their bar, fridge or cabinet and asks what they can make. ' +
         'Returns up to 8 free recipes ranked by fewest missing ingredients, each with what they have, what is missing and its fixmeadrinkapp.com page, plus up to 2 low or zero-proof options. ' +
+        'A word that could mean several bottles, such as "vermouth", is never assumed: drinks that need one kind list it under depends_on, so ask the user which bottle they have when it matters. ' +
+        'partial: true means the per-call lookup budget ran out before every candidate was ranked. ' +
         'Water and saline are assumed; garnishes never block a match. Optional filters: strength (zero_or_low covers mocktails and low-ABV drinks) and flavour notes. ' +
         'Recipes are for adults of legal drinking age. It does not give health or nutrition advice.',
       inputSchema: z.strictObject({

@@ -183,6 +183,92 @@ describe('ingress', () => {
   })
 })
 
+describe('origin and request body (audit 2, findings 5 and 6)', () => {
+  it('rejects a browser Origin that is not allowed, before reading the body', async () => {
+    const h = setup(new FakeApi(bourbonBar()), worker)
+    for (const origin of ['https://attacker.invalid', 'null', 'not an origin', 'https://claude.ai']) {
+      let read = false
+      const body = new ReadableStream({
+        pull(controller) {
+          read = true
+          controller.enqueue(new TextEncoder().encode(JSON.stringify(toolsCall())))
+          controller.close()
+        },
+      })
+      const response = await call(
+        h,
+        new Request('https://mcp.test/mcp', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', origin },
+          body,
+          duplex: 'half',
+        } as RequestInit)
+      )
+      expect(response.status, origin).toBe(403)
+      expect(response.headers.get('access-control-allow-origin')).toBe('*')
+      expect((await rpcBody(response)).error?.code).toBe(-32000)
+      expect(read, origin).toBe(false)
+    }
+    expect(h.api.calls).toEqual([])
+    expect(h.env.IP_LIMITER.keys).toEqual([])
+  })
+
+  it('serves requests without an Origin (ChatGPT and Claude call server to server) and from localhost tools', async () => {
+    const h = setup(new FakeApi(bourbonBar()), worker)
+    expect((await post(h, toolsCall())).status).toBe(200)
+    expect((await post(h, toolsCall(), { headers: { origin: 'http://localhost:6274' } })).status).toBe(200)
+  })
+
+  it('answers a request body that fails mid-upload with a JSON-RPC error and the common headers', async () => {
+    const h = setup(new FakeApi(bourbonBar()), worker)
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"jsonrpc":'))
+        controller.error(new Error('upload failed'))
+      },
+    })
+    const response = await call(
+      h,
+      new Request('https://mcp.test/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body,
+        duplex: 'half',
+      } as RequestInit)
+    )
+    expect(response.status).toBe(400)
+    expect(response.headers.get('access-control-allow-origin')).toBe('*')
+    expect(await rpcBody(response)).toMatchObject({ id: null, error: { code: -32000 } })
+  })
+
+  it('cancels an oversized streamed body, and a failing cancel does not escape', async () => {
+    const h = setup(new FakeApi(bourbonBar()), worker)
+    let cancelled = 0
+    const chunk = new Uint8Array(16 * 1024).fill(32)
+    const body = new ReadableStream({
+      pull(controller) {
+        controller.enqueue(chunk)
+      },
+      cancel() {
+        cancelled++
+        throw new Error('cancel failed')
+      },
+    })
+    const response = await call(
+      h,
+      new Request('https://mcp.test/mcp', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body,
+        duplex: 'half',
+      } as RequestInit)
+    )
+    expect(response.status).toBe(413)
+    expect(response.headers.get('access-control-allow-origin')).toBe('*')
+    expect(cancelled).toBe(1)
+  })
+})
+
 describe('pages', () => {
   it('serves the landing page, privacy notice and domain challenge, and 404s the rest', async () => {
     const h = setup(new FakeApi(), worker)

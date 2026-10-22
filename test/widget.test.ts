@@ -243,6 +243,21 @@ describe('widget document', () => {
   })
 })
 
+describe('widget view for vague bottles and partial answers', () => {
+  it('shows a conditional ingredient as a condition, never as ready', () => {
+    const martini = {
+      ...COLLINS,
+      name: 'Perfect Martini',
+      missing: ['Sweet vermouth'],
+      depends_on: [{ ingredient: 'Dry vermouth', you_said: 'vermouth' }],
+    }
+    const html = view().results(data({ cocktails: [martini], low_proof_options: [], partial: true }))
+    expect(html).toContain('<span class="need">Missing Sweet vermouth. Only if your vermouth is Dry vermouth</span>')
+    expect(html).not.toContain('Ready to make')
+    expect(html).toContain('more may match on fixmeadrinkapp.com')
+  })
+})
+
 describe('widget view with the tool input', () => {
   it('names the main section for a zero_or_low search and labels its strength', () => {
     const html = view().fromToolResult(

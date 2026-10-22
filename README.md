@@ -38,21 +38,23 @@ ChatGPT / Claude
    │  Streamable HTTP, stateless (fresh McpServer per request)
    ▼
 Cloudflare Worker (src/index.ts)
-   ├─ ingress, cheapest first: route, method (POST/OPTIONS), JSON content type,
-   │  declared size ≤ 64 KB, IP_LIMITER, then one capped read and one parse;
+   ├─ ingress, cheapest first: route, Origin (absent or localhost only, else 403), method (POST/OPTIONS),
+   │  JSON content type, declared size ≤ 64 KB, IP_LIMITER, then one capped read and one parse;
+   │  rejected bodies are cancelled best effort; a body that fails mid-upload gets a 400 JSON-RPC error;
    │  JSON-RPC batch arrays get a -32600 error; every MCP response carries the same CORS headers
    ├─ CALLER_LIMITER on openai/subject, only in addition to the IP limit
    ├─ tools (src/server.ts → src/service.ts, output schemas in src/schemas.ts)
    └─ Upstream, one per call (src/upstream.ts)
         ├─ in-isolate memory (≤10 min) and the Workers Cache API, keyed by API base URL and cache schema version
         ├─ identical lookups within a call share one request
-        └─ ≤40 API requests per call, retries included; 8 s per attempt (body included);
-           20 s per call; one retry, honouring Retry-After up to 2 s → UPSTREAM_LIMITER → API
+        └─ ≤40 API requests per call, retries included; 8 s per attempt (body read included);
+           one 20 s deadline per call over every awaited stage (cache, limiter, fetch, body, retry wait);
+           one retry, honouring Retry-After up to 2 s → UPSTREAM_LIMITER → API
 ```
 
 - **SDK:** the official TypeScript SDK v2 (`@modelcontextprotocol/server` 2.3) and its own `createMcpHandler`, which serves 2025-era clients (what ChatGPT and Claude use today) through its stateless fallback and 2026-07-28 clients natively. The Worker passes it the body it already parsed. MCP Apps helpers come from `@modelcontextprotocol/ext-apps` 2.0.
-- **Ingredient matching:** the API's `/cocktails/matches` compares exact, case-sensitive catalogue names, so `src/ingredients.ts` first maps common words to catalogue names (a curated table built from the 250 most popular free recipes, every target verified against the live API), then falls back to `/ingredients/search` re-ranked with the website's rules, for at most 8 unfamiliar words per call (the rest are listed as `not_checked`). A word that names one bottle but several catalogue entries ("vermouth", "rum", "whiskey") is marked `one_of` and covers at most one ingredient of a recipe; produce and pantry words ("limes", "sugar") cover all their forms. Water and saline count as staples.
-- **Ranking (`src/ranking.ts`):** free recipes only (premium ones hide their ingredients), filtered by strength and flavour, ordered by the API's own missing count and then recipe size, then compared with the bar from their full recipes in batches of 8: fewest missing first, then more of the bar used, then API order. Comparison stops when no unchecked group can miss fewer ingredients than the drinks already chosen (the API counts a missing garnish and this server does not, so a group can improve by one), or after 16 recipes. Garnishes and optional ingredients never block a match. Low-proof options never repeat a drink from the main list; if they cannot be loaded, the main answer is kept and `unavailable` says so.
+- **Ingredient matching:** the API's `/cocktails/matches` compares exact, case-sensitive catalogue names, so `src/ingredients.ts` first maps common words to catalogue names (a curated table built from the 250 most popular free recipes, every target verified against the live API), then falls back to `/ingredients/search` re-ranked with the website's rules, for at most 8 unfamiliar words per call (the rest are listed as `not_checked`). Interchangeable names ("gin" for London dry or dry gin, "limes" for lime juice and a wedge) are definite: they go in `matched_as` and count as owned. A word for one bottle of unknown kind ("vermouth", "whiskey", "tequila", the light or gold part of "rum", or two search results tied for first) goes in `could_be`: it stands in for at most one ingredient of a recipe, and only conditionally, as `depends_on` ("only if your vermouth is Dry vermouth"). It is never in `have` and never makes `can_make_now` true. Water and saline count as staples.
+- **Ranking (`src/ranking.ts`):** free recipes only (premium ones hide their ingredients), filtered by strength and flavour, ordered by the API's own missing count and then recipe size, then compared with the bar from their full recipes in batches of 8: fewest missing first, then fewest conditional, then more of the bar used, then API order. Comparison stops only when no unchecked recipe can rank higher under that full order. The bound is the best a recipe could score: nothing missing (the API's group count includes garnishes and optional items, so it proves nothing), at most as many owned ingredients as the bar has catalogue names or the recipe has ingredients, and its known API order. When the 16-recipe cap (6 for low-proof) stops the search first, the answer sets `partial: true` and the text says others might match. Garnishes and optional ingredients never block a match. Low-proof options never repeat a drink from the main list; if they cannot be loaded, the main answer is kept and `unavailable` says so.
 - **Recipe lookup:** the full catalogue list (three pages of 2,000, cached 12 h) is ranked locally, because the API's search ranks poorly for classics ("negroni" returns variants first). Slugs and recipe URLs match in any case. Qualified classics ("Manhattan (Sweet)") are returned with a note that the match is not exact; `suggest_similar_cocktail` adds the same note, caps suggestions at 5 and only offers low-proof drinks that share a flavour or the base spirit.
 
 Cache TTLs: catalogue 12 h, recipe details, similar lists, glossary and ingredient pages 24 h, ingredient search 7 days, matches 1 h, "not found" answers 10 min. `workers_dev` is off: the Cache API only works on the custom domain.
@@ -75,7 +77,7 @@ pnpm dev           # wrangler dev on http://127.0.0.1:8787
 pnpm smoke         # both routes, a 2025-era client (SDK 1.x) and a 2026-07-28 client (SDK 2.x), live API
 ```
 
-The tests import the Worker's default export and drive it with fake rate limiters, a fake Cache API and a fetch stub for the recipe API, so they run the production path: routing, ingress checks, CORS, limiters, both MCP routes and both protocol eras (real SDK clients), every tool, and upstream 429, 5xx, timeout, HTML, deadline and budget failures.
+The tests import the Worker's default export and drive it with fake rate limiters, a fake Cache API and a fetch stub for the recipe API, so they run the production path: routing, ingress checks, CORS, limiters, both MCP routes and both protocol eras (real SDK clients), every tool, and upstream 429 (with a real one-second Retry-After), 5xx, errored and stalled bodies, HTML, pending cache and limiter stages against the call deadline, and budget failures.
 
 `pnpm smoke` (or `node _agent/scripts/smoke.mjs <baseUrl>`) states the expected outcome of every case, checks the result fields and the age line, and exits 1 on any mismatch. It writes a transcript to `_agent/runs/`, which git ignores. On a cold cache the first run can hit the 60-a-minute upstream budget (see above); run it again after a minute.
 
@@ -83,12 +85,12 @@ The tests import the Worker's default export and drive it with fake rate limiter
 
 The widget (`src/widget.ts`) and the public pages (`src/pages.ts`) use the fixmeadrinkapp.com tokens, copied into `src/brand.ts` under the site's own names (colours, type scale, spacing, radii, shadows), with the Garçon mascot mark and "Garçon" wordmark in DM Sans semibold. Fonts (DM Sans and Inter, OFL, self-hosted) and the Garçon images are Workers static assets in `public/`; `public/_headers` adds CORS for the fonts, because the widget loads them from the host's sandboxed iframe. The widget resource's CSP declares `https://images.fixmeadrinkapp.com` (recipe photos) and `https://mcp.fixmeadrinkapp.com` (fonts and the Garçon image). The `/chatgpt/mcp` route serves the widget without the brand fonts: OpenAI's UI guidelines say "Don't use custom fonts, even in full screen modes" (https://developers.openai.com/apps-sdk/concepts/ui-guidelines), so it uses the host's `--font-sans` or the system stack. Claude's guidelines prefer host tokens for structural colour and bundled fonts over allowlisted CDNs (https://claude.com/docs/connectors/building/mcp-apps/design-guidelines, https://claude.com/docs/connectors/building/mcp-apps/transparent-theming). The widget keeps its background transparent and follows the host's light or dark theme with `light-dark()`, but it colours text, tags and links with the site's tokens (dark values derived from them) so it reads as fixmeadrinkapp.com; if a reviewer objects, map `--c-text`, `--c-muted` and `--c-rule` in `src/widget.ts` to the host's `--color-*` variables.
 
-`_agent/scripts/widget-harness.html` plays an MCP Apps host while `pnpm dev` runs: it reads the widget resource, points the production asset origin at the local server, applies the resource's own CSP to the frame (so a missing CSP entry breaks a font or image here too), answers `ui/initialize`, sends `tool-input`, then the tool result or `tool-cancelled`, resizes on `size-changed` and logs `ui/open-link`. Open it as a file. Query: `?case=result|lowproof|empty|error|cancel|loading|long|noimage`, `?theme=dark`, `?width=760`, `?route=/chatgpt/mcp`, `?bar=gin,lime`, `?server=http://127.0.0.1:8788`.
+`_agent/scripts/widget-harness.html` plays an MCP Apps host while `pnpm dev` runs: it reads the widget resource, points the production asset origin at the local server, applies the resource's own CSP to the frame (so a missing CSP entry breaks a font or image here too), answers `ui/initialize`, sends `tool-input`, then the tool result or `tool-cancelled`, resizes on `size-changed` and logs `ui/open-link`. Serve it from localhost (`python3 -m http.server 8790` in `_agent/scripts`, then http://localhost:8790/widget-harness.html): the server refuses the `null` Origin a `file://` page sends. Query: `?case=result|lowproof|empty|error|cancel|loading|long|noimage`, `?theme=dark`, `?width=760`, `?route=/chatgpt/mcp`, `?bar=gin,lime`, `?server=http://127.0.0.1:8788`.
 
 ## Test and run evidence (22 Oct 2026)
 
-- `pnpm test`: 6 files, **89 tests passed**. `pnpm typecheck`: clean, tests included.
-- `wrangler deploy --dry-run`: 745 KiB, 157 KiB gzipped.
+- `pnpm test`: 6 files, **105 tests passed**. `pnpm typecheck`: clean, tests included.
+- `wrangler deploy --dry-run`: 786 KiB, 169 KiB gzipped, plus 10 static assets (fonts and images).
 - `wrangler dev` + `pnpm smoke` against the live API: 18 tool cases and 2 ingress checks on each route, each with a 2025-era and a 2026-07-28 client: **all cases matched** (second run; the first, cold run hit the upstream budget after five `find` calls).
 - Widget harness: results, low-proof, empty, error, cancelled, loading, long-name and missing-image states in light and dark at 420 and 760 px; screenshots in `marketing/seo/outreach/2026-10-q4/previews/mcp/`.
 
@@ -119,7 +121,7 @@ get_cocktail_recipe {"name":"not a real drink qq"}  → isError: No cocktail cal
 - The catalogue has no plain "Negroni", "Mojito" or "Margarita"; it has variants ("Negroni Sbagliato", "The Original Margarita", premium). The recipe tool returns the closest match and says so.
 - Only free recipes (about a third of the catalogue) can be ranked by what is missing, because premium recipes hide their ingredients.
 - Few free recipes are Low or Non Alcoholic (37 at build time), so low-proof options often need a bottle the user lacks. The answer lists what is missing.
-- The matches endpoint returns at most 50 "close" and 50 "almost there" recipes, and at most 16 are compared per call, so very large bars can miss some.
+- The matches endpoint returns at most 50 "close" and 50 "almost there" recipes, and at most 16 are compared per call. Answers that stop at the cap before the ranking is proven say so with `partial: true`; on the live API most bars without a full match end up partial.
 
 ## Folder layout
 

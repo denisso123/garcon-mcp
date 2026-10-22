@@ -213,6 +213,7 @@ ${section(
   'Good to know',
   `<ul>
 <li>Ask Garçon matches ingredients by their common names. If something is not recognised, the answer says so; try a plainer name, such as "orange liqueur" for a brand.</li>
+<li>A word that could mean several bottles, such as "vermouth" or "whiskey", is never assumed to be a particular one. The answer says "only if your vermouth is dry vermouth" instead, and that drink is not marked ready to make.</li>
 <li>Water and saline are assumed to be in every kitchen. Garnishes are listed but never block a match.</li>
 <li>Some recipes in the catalogue are premium. For those you get the description and free recipes like it.</li>
 <li>Some classics are listed under a variant name, such as "Manhattan (Sweet)". The answer says when a match is not exact.</li>

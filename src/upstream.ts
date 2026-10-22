@@ -20,6 +20,10 @@ interface UpstreamOptions {
   readonly permit: () => Promise<boolean>
   readonly waitUntil: (promise: Promise<unknown>) => void
   readonly baseUrl?: string
+  /** The whole call's deadline. Tests shorten it; production uses 20 s. */
+  readonly deadlineMs?: number
+  /** One request, body included. Tests shorten it; production uses 8 s. */
+  readonly attemptTimeoutMs?: number
 }
 
 // Bump when the shape of cached values changes.
@@ -71,6 +75,38 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+function isTimeout(error: unknown) {
+  return error instanceof Error && error.name === 'TimeoutError'
+}
+
+/** `promise`, or the signal's reason as soon as it aborts. The promise keeps running but nobody waits for it. */
+function untilAborted<T>(promise: T | Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason)
+    signal.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve(promise).then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error)
+      }
+    )
+  })
+}
+
+/** Best effort and never awaited: a body that is already errored rejects its cancel. */
+function discardBody(response: Response) {
+  try {
+    response.body?.cancel().catch(() => undefined)
+  } catch {
+    // A locked or disturbed body cannot be cancelled; it is released with the response.
+  }
+}
+
 /** Milliseconds a 429 or 503 asks us to wait, or null when it does not say. */
 function retryAfterMs(response: Response): number | null {
   const header = response.headers.get('retry-after')
@@ -106,7 +142,8 @@ export class Upstream {
   private readonly permit: () => Promise<boolean>
   private readonly waitUntil: (promise: Promise<unknown>) => void
   private readonly baseUrl: string
-  private readonly deadline = Date.now() + CALL_DEADLINE_MS
+  private readonly deadline: number
+  private readonly attemptTimeoutMs: number
   private readonly inflight = new Map<string, Promise<unknown>>()
   private requests = 0
 
@@ -115,6 +152,8 @@ export class Upstream {
     this.permit = options.permit
     this.waitUntil = options.waitUntil
     this.baseUrl = options.baseUrl ?? API_BASE_URL
+    this.deadline = Date.now() + (options.deadlineMs ?? CALL_DEADLINE_MS)
+    this.attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS
   }
 
   /** GET an API path. Null when the API answers 404 or 400. */
@@ -128,15 +167,40 @@ export class Upstream {
     return this.load<T>(`POST ${path} ${payload}`, ttlSeconds, () => this.request<T>(path, payload))
   }
 
-  /** Identical lookups within one call share a single promise. */
+  /**
+   * Identical lookups within one call share a single promise. Whatever goes
+   * wrong below this point reaches the tools as an UpstreamError, so an
+   * optional lookup can fail without taking the main answer with it.
+   */
   private load<T>(what: string, ttlSeconds: number, fetchValue: () => Promise<T | null>) {
     const key = `${CACHE_SCHEMA} ${this.baseUrl} ${what}`
     let pending = this.inflight.get(key)
     if (!pending) {
-      pending = this.cached(key, ttlSeconds, fetchValue)
+      pending = this.cached(key, ttlSeconds, fetchValue).catch((error: unknown) => {
+        throw error instanceof UpstreamError ? error : new UpstreamError(UNAVAILABLE)
+      })
       this.inflight.set(key, pending)
     }
     return pending as Promise<T | null>
+  }
+
+  /**
+   * One stage of the call (cache lookup, limiter, wait), bounded by the call
+   * deadline. A stage that is still pending at the deadline fails the call
+   * with "too slow"; when it settles later, nothing is waiting for it.
+   */
+  private stage<T>(work: () => Promise<T>): Promise<T> {
+    const remaining = this.deadline - Date.now()
+    if (remaining <= 0) return Promise.reject(new UpstreamError(TOO_SLOW))
+    let promise: Promise<T>
+    try {
+      promise = work()
+    } catch (error) {
+      return Promise.reject(error)
+    }
+    return untilAborted(promise, AbortSignal.timeout(remaining)).catch((error: unknown) => {
+      throw isTimeout(error) ? new UpstreamError(TOO_SLOW) : error
+    })
   }
 
   private async cached<T>(
@@ -148,25 +212,38 @@ export class Upstream {
     if (hot !== undefined) return hot as T | null
 
     const cacheRequest = new Request(`${CACHE_KEY_ORIGIN}/?k=${encodeURIComponent(key)}`)
-    const stored = await this.cache?.match(cacheRequest).catch(() => undefined)
-    if (stored) {
-      try {
-        const { v } = (await stored.json()) as { v: T | null }
-        memorySet(key, v)
-        return v
-      } catch {
-        // An unreadable entry only costs an API request.
+    const cache = this.cache
+    if (cache) {
+      // A broken cache only costs an API request; the deadline still applies.
+      const stored = await this.stage(() =>
+        Promise.resolve()
+          .then(() => cache.match(cacheRequest))
+          .catch(() => undefined)
+      )
+      if (stored) {
+        try {
+          const { v } = await this.stage(() => stored.json() as Promise<{ v: T | null }>)
+          memorySet(key, v)
+          return v
+        } catch (error) {
+          if (error instanceof UpstreamError) throw error
+          // An unreadable entry only costs an API request.
+        }
       }
     }
 
     const value = await fetchValue()
     memorySet(key, value)
-    if (this.cache) {
+    if (cache) {
       const ttl = value === null ? Math.min(ttlSeconds, NOT_FOUND_TTL_SECONDS) : ttlSeconds
       const response = new Response(JSON.stringify({ v: value }), {
         headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ttl}` },
       })
-      this.waitUntil(this.cache.put(cacheRequest, response).catch(() => undefined))
+      this.waitUntil(
+        Promise.resolve()
+          .then(() => cache.put(cacheRequest, response))
+          .catch(() => undefined)
+      )
     }
     return value
   }
@@ -175,7 +252,7 @@ export class Upstream {
     for (let attempt = 1; ; attempt++) {
       // Counted before the first await, so parallel lookups cannot overshoot.
       if (this.requests++ >= MAX_REQUESTS_PER_CALL) throw new UpstreamError(OVER_BUDGET)
-      if (!(await this.permit())) throw new UpstreamError(BUSY)
+      if (!(await this.stage(() => this.permit()))) throw new UpstreamError(BUSY)
 
       const result = await this.attempt<T>(path, jsonBody)
       if (result.ok) return result.value
@@ -183,38 +260,46 @@ export class Upstream {
       const wait = result.waitMs
       if (attempt >= MAX_ATTEMPTS || wait === null || wait > MAX_RETRY_WAIT_MS) throw result.error
       if (wait >= remaining) throw new UpstreamError(TOO_SLOW)
-      await sleep(wait)
+      await this.stage(() => sleep(wait))
     }
   }
 
-  /** One request, body included, inside the attempt timeout and the call deadline. */
+  /**
+   * One request inside the attempt timeout and the call deadline. The same
+   * signal bounds the body read, which a stalled stream would otherwise hold
+   * open. The status decides the outcome; cleaning up the body never does.
+   */
   private async attempt<T>(path: string, jsonBody?: string): Promise<Attempt<T>> {
     const remaining = this.deadline - Date.now()
     if (remaining <= 0) throw new UpstreamError(TOO_SLOW)
-    let response: Response
+    const signal = AbortSignal.timeout(Math.min(this.attemptTimeoutMs, remaining))
+    let response: Response | undefined
     try {
-      response = await fetch(`${this.baseUrl}${path}`, {
-        method: jsonBody === undefined ? 'GET' : 'POST',
-        headers: {
-          accept: 'application/json',
-          'user-agent': USER_AGENT,
-          ...(jsonBody === undefined ? {} : { 'content-type': 'application/json' }),
-        },
-        body: jsonBody,
-        signal: AbortSignal.timeout(Math.min(ATTEMPT_TIMEOUT_MS, remaining)),
-      })
-      if (response.ok) return { ok: true, value: unwrap<T>(await response.text()) }
+      response = await untilAborted(
+        fetch(`${this.baseUrl}${path}`, {
+          method: jsonBody === undefined ? 'GET' : 'POST',
+          headers: {
+            accept: 'application/json',
+            'user-agent': USER_AGENT,
+            ...(jsonBody === undefined ? {} : { 'content-type': 'application/json' }),
+          },
+          body: jsonBody,
+          signal,
+        }),
+        signal
+      )
+      if (response.ok) return { ok: true, value: unwrap<T>(await untilAborted(response.text(), signal)) }
     } catch (error) {
       if (error instanceof UpstreamError) throw error
-      const timedOut = error instanceof Error && error.name === 'TimeoutError'
+      if (response) discardBody(response)
       return {
         ok: false,
-        error: new UpstreamError(timedOut ? TOO_SLOW : UNAVAILABLE),
+        error: new UpstreamError(isTimeout(error) ? TOO_SLOW : UNAVAILABLE),
         waitMs: backoffMs(),
       }
     }
 
-    await response.body?.cancel()
+    discardBody(response)
     if (response.status === 404 || response.status === 400) return { ok: true, value: null }
     if (response.status === 429) {
       return { ok: false, error: new UpstreamError(BUSY), waitMs: retryAfterMs(response) ?? backoffMs() }

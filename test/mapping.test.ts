@@ -72,7 +72,9 @@ describe('recipe mapping', () => {
 
 describe('ingredient resolution', () => {
   it('expands common words to catalogue names', () => {
-    expect(resolveAlias('Gin')).toEqual({ you_said: 'Gin', matched_as: ['London dry gin', 'Dry gin'], one_of: true })
+    expect(resolveAlias('Gin')).toEqual({ you_said: 'Gin', matched_as: ['London dry gin', 'Dry gin'] })
+    expect(resolveAlias('vermouth')).toEqual({ you_said: 'vermouth', matched_as: [], could_be: ['Sweet vermouth', 'Dry vermouth'] })
+    expect(resolveAlias('Rum')).toEqual({ you_said: 'Rum', matched_as: ['Rum'], could_be: ['Light rum', 'Gold rum'] })
     expect(resolveAlias('limes')).toEqual({ you_said: 'limes', matched_as: ['Lime Juice', 'Lime'] })
     expect(resolveAlias("Peychaud's")?.matched_as).toEqual(["Peychaud's bitters"])
     expect(resolveAlias('dragonfruit')).toBeNull()
@@ -81,9 +83,9 @@ describe('ingredient resolution', () => {
 
   it('picks near matches from search results and skips look-alikes', () => {
     const options = searchGin as RawIngredientOption[]
-    const gin = resolveFromSearch('gin', options)
-    expect(gin.matched_as).not.toContain('Ginger')
-    expect(gin.matched_as.length).toBeGreaterThan(0)
+    // Two names tie for "gin", so neither is assumed; a clear winner is.
+    expect(resolveFromSearch('gin', options)).toEqual({ you_said: 'gin', matched_as: [], could_be: ['Dry gin', 'Sloe gin'] })
+    expect(resolveFromSearch('dry gin', options)).toEqual({ you_said: 'dry gin', matched_as: ['Dry gin'] })
     expect(resolveFromSearch('sloe gin', options).matched_as[0]).toBe('Sloe gin')
     expect(resolveFromSearch('quantum', options).matched_as).toEqual([])
   })

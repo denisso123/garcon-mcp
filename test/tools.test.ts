@@ -3,7 +3,7 @@ import worker from '../src/index'
 import { explainOutput, findOutput, recipeOutput, similarOutput } from '../src/schemas'
 import { AGE_NOTE } from '../src/site'
 import { bourbonBar, garibaldi, glossaryRoutes, mule, oldFashioned } from './data'
-import { FakeApi, type FakeApiData, envelope, preview, recipe, setup, text, tool } from './harness'
+import { FakeApi, type FakeApiData, envelope, erroredBody, preview, recipe, setup, text, tool } from './harness'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -23,8 +23,10 @@ describe('find_cocktails_by_ingredients', () => {
     })
     expect(names(out.cocktails)).not.toContain('Rose Sour')
     expect(names(out.low_proof_options)).toEqual(['Garibaldi'])
-    expect(out.bar.recognised.find((term) => term.you_said === 'bitters')?.one_of).toBe(true)
-    expect(out.bar.recognised.find((term) => term.you_said === 'sugar')?.one_of).toBeUndefined()
+    expect(out.bar.recognised.find((term) => term.you_said === 'bitters')).toEqual({
+      you_said: 'bitters',
+      matched_as: ['Angostura', 'Aromatic Bitters'],
+    })
     expect(result._meta?.images).toMatchObject({
       'https://fixmeadrinkapp.com/recipes/old-fashioned': oldFashioned.imageUrl,
     })
@@ -53,7 +55,7 @@ describe('find_cocktails_by_ingredients', () => {
     }
   })
 
-  it('lets an unspecified bottle cover one ingredient, and a pantry word cover all its forms', async () => {
+  it('lets an unspecified bottle stand in for one ingredient, conditionally, and a pantry word cover all its forms', async () => {
     const perfect = recipe('perfect-martini', ['London dry gin', 'Sweet vermouth', 'Dry vermouth'])
     const sour = recipe('lime-sour', ['London dry gin', 'Lime Juice', 'Lime'])
     const h = setup(
@@ -67,13 +69,14 @@ describe('find_cocktails_by_ingredients', () => {
       (await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['gin', 'vermouth', 'limes'] })).structuredContent
     )
     const martini = out.cocktails.find((card) => card.name === 'Perfect Martini')!
-    expect(martini.have).toHaveLength(2)
+    expect(martini.have).toEqual(['London dry gin'])
     expect(martini.missing).toHaveLength(1)
+    expect(martini.depends_on).toHaveLength(1)
     expect(martini.can_make_now).toBe(false)
     expect(out.cocktails.find((card) => card.name === 'Lime Sour')).toMatchObject({ missing: [], can_make_now: true })
   })
 
-  it('compares every close candidate before truncating, so a drink missing only a garnish is not dropped', async () => {
+  it('compares all 13 close candidates, under the 16-recipe cap, so a drink missing only a garnish is not dropped', async () => {
     const close = Array.from({ length: 12 }, (_, i) =>
       recipe(`close-${i}`, ['Vodka', 'Lime Juice', `Rare liqueur ${i}`])
     )
@@ -90,6 +93,57 @@ describe('find_cocktails_by_ingredients', () => {
     )
     expect(out.cocktails[0]).toMatchObject({ name: 'Garnish Only', can_make_now: true, missing_garnish: ['Lime peel'] })
     expect(out.cocktails).toHaveLength(5)
+    expect(h.api.callsTo('/cocktails/slug/')).toHaveLength(13)
+  })
+
+  it('ranks by owned ingredients even when the API counts the others as complete too (audit 2, finding 1)', async () => {
+    // Eight drinks own only Vodka (plus the assumed staples); the ninth owns Vodka and Lime Juice.
+    const small = Array.from({ length: 8 }, (_, i) => recipe(`small-${i}`, ['Vodka', 'Chilled water', 'Saline solution 4:1']))
+    const both = recipe('vodka-lime', ['Vodka', 'Lime Juice'])
+    const h = setup(
+      new FakeApi({ recipes: [...small, both], matches: { readyToMake: [...small, both].map((item) => preview(item)) } }),
+      worker
+    )
+    const out = findOutput.parse(
+      (await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['vodka', 'lime juice'], limit: 1 })).structuredContent
+    )
+    expect(names(out.cocktails)).toEqual(['Vodka Lime'])
+    expect(out.partial).toBeUndefined()
+  })
+
+  it('flags a partial answer when the 16-recipe cap stops before a better drink is ruled out (audit 2, finding 1)', async () => {
+    const close = Array.from({ length: 16 }, (_, i) => recipe(`close-${i}`, ['Vodka', `Rare liqueur ${i}`]))
+    const garnishOnly = recipe('garnish-only', ['Vodka', 'Lime peel|garnish'])
+    const h = setup(
+      new FakeApi({
+        recipes: [...close, garnishOnly],
+        matches: { closeMatch: [...close, garnishOnly].map((item) => preview(item)) },
+      }),
+      worker
+    )
+    const result = await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['vodka'] })
+    const out = findOutput.parse(result.structuredContent)
+    expect(h.api.callsTo('/cocktails/slug/close-')).toHaveLength(16)
+    expect(h.api.callsTo('/cocktails/slug/garnish-only')).toHaveLength(0)
+    expect(out.partial).toBe(true)
+    expect(text(result)).toMatch(/compared up to 16 recipes/)
+  })
+
+  it('never turns an unspecified bottle into a definite one (audit 2, finding 2)', async () => {
+    const dry = recipe('dry-one', ['Dry vermouth'])
+    const sweet = recipe('sweet-one', ['Sweet vermouth'])
+    const h = setup(new FakeApi({ recipes: [dry, sweet], matches: { readyToMake: [preview(dry), preview(sweet)] } }), worker)
+    const result = await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['vermouth'] })
+    const out = findOutput.parse(result.structuredContent)
+    expect(out.cocktails).toHaveLength(2)
+    for (const card of out.cocktails) {
+      expect(card.have).toEqual([])
+      expect(card.missing).toEqual([])
+      expect(card.can_make_now).toBe(false)
+      expect(card.depends_on).toEqual([{ ingredient: card.name === 'Dry One' ? 'Dry vermouth' : 'Sweet vermouth', you_said: 'vermouth' }])
+    }
+    expect(text(result)).toContain('if your vermouth is Dry vermouth')
+    expect(out.bar.recognised[0]).toEqual({ you_said: 'vermouth', matched_as: [], could_be: ['Sweet vermouth', 'Dry vermouth'] })
   })
 
   it('stops comparing once later groups cannot beat the drinks already found', async () => {
@@ -117,6 +171,16 @@ describe('find_cocktails_by_ingredients', () => {
     expect(out.unavailable).toEqual(['low_proof_options'])
     expect(h.api.callsTo('/cocktails?')).toHaveLength(2)
     expect(text(result)).toContain('could not be loaded this time')
+  })
+
+  it('keeps the drinks it found when a low-proof request fails and its body cannot be cancelled (audit 2, finding 3)', async () => {
+    const h = setup(new FakeApi(bourbonBar()), worker)
+    h.api.override('/cocktails?', () => new Response(erroredBody(), { status: 503 }))
+    const result = await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['bourbon', 'sugar', 'bitters'] })
+    expect(result.isError).toBeFalsy()
+    const out = findOutput.parse(result.structuredContent)
+    expect(out.cocktails[0].name).toBe('Old Fashioned')
+    expect(out.unavailable).toEqual(['low_proof_options'])
   })
 
   it('looks up at most 8 unfamiliar names per call and says which it skipped', async () => {

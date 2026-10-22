@@ -19,8 +19,12 @@ function preview(id: string, extra: Partial<RawPreview> = {}): RawPreview {
 
 const ids = (items: { preview: RawPreview }[]) => items.map((item) => item.preview.id)
 
-function term(names: string[], oneOf = false): ResolvedTerm {
-  return oneOf ? { you_said: names[0], matched_as: names, one_of: true } : { you_said: names[0], matched_as: names }
+function term(names: string[]): ResolvedTerm {
+  return { you_said: names[0], matched_as: names }
+}
+
+function vague(word: string, couldBe: string[], names: string[] = []): ResolvedTerm {
+  return { you_said: word, matched_as: names, could_be: couldBe }
 }
 
 describe('filters', () => {
@@ -69,9 +73,14 @@ describe('compareWithBar', () => {
   it('splits have and missing, ignoring optional items and staples', () => {
     const result = compareWithBar(
       recipe('r', ['London dry gin', 'Lime Juice', 'Rich Simple (2:1) syrup', 'Saline solution 4:1', 'Chilled water', 'Orange bitters?']),
-      [term(['London dry gin', 'Dry gin'], true), term(['Lime Juice'])]
+      [term(['London dry gin', 'Dry gin']), term(['Lime Juice'])]
     )
-    expect(result).toEqual({ have: ['London dry gin', 'Lime Juice'], missing: ['Rich Simple (2:1) syrup'], missingGarnish: [] })
+    expect(result).toEqual({
+      have: ['London dry gin', 'Lime Juice'],
+      missing: ['Rich Simple (2:1) syrup'],
+      dependsOn: [],
+      missingGarnish: [],
+    })
   })
 
   it('reports garnishes apart, so they never block a match', () => {
@@ -84,12 +93,23 @@ describe('compareWithBar', () => {
     expect(compareWithBar(recipe('r', ['Bénédictine']), [term(['benedictine'])]).have).toEqual(['Bénédictine'])
   })
 
-  it('uses each one-bottle term once, finding the assignment that covers the most', () => {
+  it('lets a vague bottle stand in for one ingredient, conditionally, and never as owned', () => {
     const twoRums = recipe('r', ['Gold rum', 'Light rum'])
-    const rum = term(['Light rum', 'Rum', 'Gold rum'], true)
-    const darkRum = term(['Gold rum', 'Rum'], true)
-    expect(compareWithBar(twoRums, [rum]).missing).toHaveLength(1)
-    expect(compareWithBar(twoRums, [rum, darkRum]).missing).toEqual([])
+    const rum = vague('rum', ['Light rum', 'Gold rum'], ['Rum'])
+    const one = compareWithBar(twoRums, [rum])
+    expect(one.have).toEqual([])
+    expect(one.missing).toHaveLength(1)
+    expect(one.dependsOn).toHaveLength(1)
+    const both = compareWithBar(twoRums, [rum, term(['Gold rum', 'Rum'])])
+    expect(both).toMatchObject({ have: ['Gold rum'], missing: [], dependsOn: [{ ingredient: 'Light rum', you_said: 'rum' }] })
+  })
+
+  it('counts a definite name before a vague one', () => {
+    const result = compareWithBar(recipe('r', ['Rum', 'Sweet vermouth']), [
+      vague('rum', ['Light rum', 'Gold rum'], ['Rum']),
+      vague('vermouth', ['Sweet vermouth', 'Dry vermouth']),
+    ])
+    expect(result).toMatchObject({ have: ['Rum'], missing: [], dependsOn: [{ ingredient: 'Sweet vermouth', you_said: 'vermouth' }] })
   })
 })
 
@@ -99,6 +119,7 @@ function match(id: string, have: number, missing: number, order = 0): Match {
     comparison: {
       have: Array.from({ length: have }, (_, i) => `h${i}`),
       missing: Array.from({ length: missing }, (_, i) => `m${i}`),
+      dependsOn: [],
       missingGarnish: [],
     },
   }
@@ -123,31 +144,51 @@ describe('bestMatches', () => {
     }
   }
 
-  it('stops once no unchecked group can miss fewer ingredients', async () => {
+  it('stops once no unchecked candidate can rank higher under the full comparator', async () => {
     const checked: string[] = []
     const list = candidates([0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2])
-    const top = await bestMatches(list, 3, 16, compareBy((c) => c.apiMissing, checked))
-    expect(ids(top.map((m) => m.candidate))).toEqual(['c0', 'c1', 'c2'])
+    // The bar has one name, so nothing can own more than the one ingredient each match owns,
+    // and every unchecked candidate comes later in API order.
+    const { matches, complete } = await bestMatches(list, 3, 16, compareBy((c) => c.apiMissing, checked), 1)
+    expect(ids(matches.map((m) => m.candidate))).toEqual(['c0', 'c1', 'c2'])
     expect(checked).toHaveLength(8)
+    expect(complete).toBe(true)
+  })
+
+  it('keeps comparing when an unchecked candidate could own more of the bar', async () => {
+    const checked: string[] = []
+    const list = candidates([0, 0, 0, 0])
+    const compare = async (batch: readonly GroupCandidate[]) => {
+      checked.push(...ids([...batch]))
+      return batch.map((candidate) => ({ ...match(candidate.preview.id, candidate.preview.id === 'c3' ? 2 : 1, 0, candidate.order), candidate }))
+    }
+    const { matches } = await bestMatches(list.slice(0, 3), 1, 16, compare, 2)
+    expect(checked).toEqual(['c0', 'c1', 'c2'])
+    expect(matches[0].candidate.preview.id).toBe('c0')
+    checked.length = 0
+    const later = await bestMatches(list, 1, 16, compare, 2)
+    expect(later.matches[0].candidate.preview.id).toBe('c3')
   })
 
   it('checks a whole close group, because a garnish can hide a complete match', async () => {
     const checked: string[] = []
     const list = candidates(Array.from({ length: 13 }, () => 1))
-    const top = await bestMatches(list, 5, 16, compareBy((c) => (c.preview.id === 'c12' ? 0 : 1), checked))
-    expect(top[0].candidate.preview.id).toBe('c12')
+    const { matches, complete } = await bestMatches(list, 5, 16, compareBy((c) => (c.preview.id === 'c12' ? 0 : 1), checked), 1)
+    expect(matches[0].candidate.preview.id).toBe('c12')
     expect(checked).toHaveLength(13)
+    expect(complete).toBe(true)
   })
 
-  it('never checks more than the cap and drops matches that use nothing from the bar', async () => {
+  it('never checks more than the cap, says the answer is partial, and drops matches that use nothing from the bar', async () => {
     const checked: string[] = []
     const list = candidates(Array.from({ length: 30 }, () => 1))
     const compare = async (batch: readonly GroupCandidate[]) => {
       checked.push(...ids([...batch]))
       return batch.map((candidate) => ({ ...match(candidate.preview.id, candidate.order % 2, 1, candidate.order), candidate }))
     }
-    const top = await bestMatches(list, 5, 16, compare)
+    const { matches, complete } = await bestMatches(list, 5, 16, compare, 1)
     expect(checked).toHaveLength(16)
-    expect(top.every((m) => m.comparison.have.length > 0)).toBe(true)
+    expect(complete).toBe(false)
+    expect(matches.every((m) => m.comparison.have.length > 0)).toBe(true)
   })
 })

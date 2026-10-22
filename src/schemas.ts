@@ -15,19 +15,23 @@ const cocktailCard = z.object({
 })
 
 const matchCard = cocktailCard.extend({
-  have: z.array(z.string()).describe('Recipe ingredients covered by your bar'),
+  have: z.array(z.string()).describe('Recipe ingredients your bar definitely covers'),
   missing: z.array(z.string()).describe('Required ingredients you do not have'),
+  depends_on: z
+    .array(z.object({ ingredient: z.string(), you_said: z.string() }))
+    .optional()
+    .describe('Ingredients a vague word may cover: the drink works only if your <you_said> is this <ingredient>'),
   missing_garnish: z.array(z.string()).optional(),
-  can_make_now: z.boolean(),
+  can_make_now: z.boolean().describe('True only when nothing is missing and nothing depends on which bottle you have'),
 })
 
 const resolvedTerm = z.object({
   you_said: z.string(),
-  matched_as: z.array(z.string()),
-  one_of: z
-    .literal(true)
+  matched_as: z.array(z.string()).describe('Catalogue names this word definitely covers'),
+  could_be: z
+    .array(z.string())
     .optional()
-    .describe('Set when the word names one bottle that could be any of these; it covers one recipe ingredient'),
+    .describe('One bottle that may be any of these; a recipe that needs one shows it under depends_on, never under have'),
 })
 
 export const findOutput = z.object({
@@ -48,6 +52,10 @@ export const findOutput = z.object({
     .optional()
     .describe('Parts of the answer that could not be loaded this time'),
   more_ideas_url: z.string(),
+  partial: z
+    .literal(true)
+    .optional()
+    .describe('Set when the per-call lookup budget ran out before every recipe that could rank higher was checked'),
 })
 
 export const recipeOutput = z.object({

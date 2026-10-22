@@ -11,8 +11,9 @@ import type { RawIngredientOption } from './api-types'
 import type { ResolvedTerm } from './schemas'
 import { NO_MATCH, normalize, rankByName } from './text'
 
-// Each alias maps to catalogue names, most common first. A word can name
-// several catalogue entries; see FORMS for what that means when comparing.
+// Each alias maps to catalogue names, most common first. Several names are
+// interchangeable forms of what the word means ("gin" is London dry or dry
+// gin; "limes" give lime juice and a wedge), so the bar owns all of them.
 const ALIASES = new Map<string, readonly string[]>(
   Object.entries({
     gin: ['London dry gin', 'Dry gin'],
@@ -20,7 +21,6 @@ const ALIASES = new Map<string, readonly string[]>(
     'dry gin': ['Dry gin', 'London dry gin'],
     'old tom gin': ['Old Tom gin'],
     vodka: ['Vodka'],
-    rum: ['Light rum', 'Rum', 'Gold rum'],
     'white rum': ['Light rum', 'Rum'],
     'light rum': ['Light rum', 'Rum'],
     'silver rum': ['Light rum', 'Rum'],
@@ -28,14 +28,11 @@ const ALIASES = new Map<string, readonly string[]>(
     'gold rum': ['Gold rum', 'Rum'],
     'aged rum': ['Gold rum', 'Rum'],
     'spiced rum': ['Spiced rum'],
-    tequila: ['Tequila blanco', 'Tequila reposado'],
     'blanco tequila': ['Tequila blanco'],
     'silver tequila': ['Tequila blanco'],
     'tequila blanco': ['Tequila blanco'],
     'reposado tequila': ['Tequila reposado'],
     mezcal: ['Mezcal'],
-    whiskey: ['Bourbon whiskey', 'Rye whiskey'],
-    whisky: ['Blended scotch whisky', 'Bourbon whiskey'],
     bourbon: ['Bourbon whiskey'],
     rye: ['Rye whiskey'],
     'rye whiskey': ['Rye whiskey'],
@@ -77,7 +74,6 @@ const ALIASES = new Map<string, readonly string[]>(
     'orange bitters': ['Orange bitters'],
     'peychauds bitters': ["Peychaud's bitters"],
     peychauds: ["Peychaud's bitters"],
-    vermouth: ['Sweet vermouth', 'Dry vermouth'],
     'sweet vermouth': ['Sweet vermouth'],
     'red vermouth': ['Sweet vermouth'],
     'rosso vermouth': ['Sweet vermouth'],
@@ -133,11 +129,20 @@ const ALIASES = new Map<string, readonly string[]>(
   })
 )
 
-// Produce and pantry words a recipe can use in several forms at once (lime
-// juice and a lime wedge, both from limes). Every other word names one
-// bottle: when it maps to several catalogue names ("vermouth" to sweet and
-// dry), it covers at most one ingredient of a recipe.
-const FORMS = new Set(['lime', 'limes', 'lemon', 'lemons', 'sugar', 'honey', 'coffee'])
+// Words for one bottle whose kind the word does not say. "Vermouth" is sweet
+// or dry, never both, so a recipe that needs one of them depends on which
+// bottle it is: it is shown as conditional, never as owned. `names` are what
+// the word covers whatever the bottle is ("rum" covers a recipe asking for
+// plain rum).
+const ONE_BOTTLE = new Map<string, { readonly names: readonly string[]; readonly oneOf: readonly string[] }>(
+  Object.entries({
+    rum: { names: ['Rum'], oneOf: ['Light rum', 'Gold rum'] },
+    tequila: { names: [], oneOf: ['Tequila blanco', 'Tequila reposado'] },
+    whiskey: { names: [], oneOf: ['Bourbon whiskey', 'Rye whiskey'] },
+    whisky: { names: [], oneOf: ['Blended scotch whisky', 'Bourbon whiskey'] },
+    vermouth: { names: [], oneOf: ['Sweet vermouth', 'Dry vermouth'] },
+  })
+)
 
 // Things every kitchen has. They are added to every bar and never reported
 // as missing; the result says they were assumed.
@@ -153,21 +158,27 @@ function aliasKey(term: string) {
   return normalize(term.replace(/['’]/g, ''))
 }
 
-function aliasNames(term: string) {
+function lookup<T>(table: ReadonlyMap<string, T>, term: string) {
   const key = aliasKey(term)
-  return ALIASES.get(key) ?? ALIASES.get(key.replace(/s$/, ''))
+  return table.get(key) ?? table.get(key.replace(/s$/, ''))
 }
 
-function resolved(term: string, names: readonly string[], oneBottle: boolean): ResolvedTerm {
+function isKnownWord(term: string) {
+  return Boolean(lookup(ALIASES, term) ?? lookup(ONE_BOTTLE, term))
+}
+
+function resolved(term: string, names: readonly string[], couldBe: readonly string[] = []): ResolvedTerm {
   const result: ResolvedTerm = { you_said: term, matched_as: [...names] }
-  if (oneBottle && names.length > 1) result.one_of = true
+  if (couldBe.length) result.could_be = [...couldBe]
   return result
 }
 
-/** A term resolved through the alias table, or null when it has no alias. */
+/** A term resolved through the alias tables, or null when it has no alias. */
 export function resolveAlias(term: string): ResolvedTerm | null {
-  const names = aliasNames(term)
-  return names ? resolved(term, names, !FORMS.has(aliasKey(term))) : null
+  const bottle = lookup(ONE_BOTTLE, term)
+  if (bottle) return resolved(term, bottle.names, bottle.oneOf)
+  const names = lookup(ALIASES, term)
+  return names ? resolved(term, names) : null
 }
 
 /**
@@ -183,12 +194,18 @@ export function resolveFromSearch(
   )
   const best = ranked[0]?.rank ?? NO_MATCH
   // Up to two names that rank as well as the best one (plus one step), and
-  // never anything weaker than "all words in the name".
-  const names = ranked
-    .filter((entry) => entry.rank <= Math.min(best + 1, 4))
-    .slice(0, 2)
-    .map((entry) => entry.item.name)
-  return resolved(term, names, true)
+  // never anything weaker than "all words in the name". A clear winner is
+  // what the word means; a runner-up, or two names tied for first, could be
+  // the bottle but are not assumed.
+  const near = ranked.filter((entry) => entry.rank <= Math.min(best + 1, 4)).slice(0, 2)
+  if (near.length === 2 && near[0].rank === near[1].rank) {
+    return resolved(term, [], near.map((entry) => entry.item.name))
+  }
+  return resolved(
+    term,
+    near.slice(0, 1).map((entry) => entry.item.name),
+    near.slice(1).map((entry) => entry.item.name)
+  )
 }
 
 /** Dedupe and trim the terms someone typed, keeping their order. */
@@ -198,7 +215,7 @@ export function cleanTerms(terms: readonly string[]) {
   for (const raw of terms) {
     // People paste "gin, lime and sugar" as one item; split it, but keep
     // names that contain "and" ("half and half") whole.
-    const parts = aliasNames(raw) ? [raw] : raw.split(/,|;|\n|\band\b|\+/i)
+    const parts = isKnownWord(raw) ? [raw] : raw.split(/,|;|\n|\band\b|\+/i)
     for (const part of parts) {
       const term = part.trim().replace(/\s+/g, ' ')
       const key = normalize(term)

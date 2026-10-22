@@ -267,6 +267,15 @@ export function recipe(slug: string, ingredients: string[], extra: Partial<RawRe
   }
 }
 
+/** A response body that errors once read, as when a connection resets after the headers. Cancelling it rejects too. */
+export function erroredBody() {
+  return new ReadableStream({
+    start(controller) {
+      controller.error(new TypeError('connection reset after headers'))
+    },
+  })
+}
+
 export function text(result: ToolResult) {
   return result.content.map((block) => block.text ?? '').join('\n')
 }

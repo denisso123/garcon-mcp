@@ -22,6 +22,7 @@ import {
   bestMatches,
   candidatesFromGroups,
   compareWithBar,
+  definiteNames,
   isLowProof,
   matchesFlavors,
   rankMatches,
@@ -167,7 +168,7 @@ async function resolveTerms(up: Upstream, terms: readonly string[]) {
   const notChecked: string[] = []
   resolved.forEach((item, index) => {
     if (!item) notChecked.push(terms[index])
-    else if (item.matched_as.length === 0) notRecognised.push(item.you_said)
+    else if (item.matched_as.length === 0 && !item.could_be?.length) notRecognised.push(item.you_said)
     else recognised.push(item)
   })
   return { recognised, notRecognised, notChecked }
@@ -213,8 +214,9 @@ function toMatchCard({ candidate, comparison }: Match): MatchCard {
     ...toCard(candidate.preview),
     have: comparison.have,
     missing: comparison.missing,
-    can_make_now: comparison.missing.length === 0,
+    can_make_now: comparison.missing.length === 0 && comparison.dependsOn.length === 0,
   }
+  if (comparison.dependsOn.length) card.depends_on = comparison.dependsOn
   if (comparison.missingGarnish.length) card.missing_garnish = comparison.missingGarnish
   return card
 }
@@ -249,17 +251,24 @@ export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolO
     return { structured: output, text: findText(output) }
   }
 
-  const apiBar = [...new Set([...recognised.flatMap((item) => item.matched_as), ...STAPLES])].sort()
+  const apiBar = [
+    ...new Set([...recognised.flatMap((item) => [...item.matched_as, ...(item.could_be ?? [])]), ...STAPLES]),
+  ].sort()
   const groups =
     (await up.post<RawMatchGroups>('/cocktails/matches', { ingredients: apiBar }, HOUR)) ?? {}
   const compare = (batch: readonly GroupCandidate[]) => compareCandidates(up, batch, recognised)
+  // No recipe can own more of the bar than the bar has catalogue names.
+  const haveCeiling = definiteNames(recognised).size
 
-  let cocktails = await bestMatches(
+  const main = await bestMatches(
     candidatesFromGroups(groups, { strength: args.strength, flavors: args.flavors }),
     limit,
     MAX_CHECKED,
-    compare
+    compare,
+    haveCeiling
   )
+  let cocktails = main.matches
+  if (!main.complete) output.partial = true
   let lowProof: Match[] = []
 
   if (args.strength === 'zero_or_low') {
@@ -271,14 +280,17 @@ export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolO
   } else {
     const shown = new Set(cocktails.map((match) => match.candidate.preview.id))
     try {
-      lowProof = await bestMatches(
+      const low = await bestMatches(
         candidatesFromGroups(groups, { strength: 'zero_or_low', flavors: args.flavors }).filter(
           (candidate) => !shown.has(candidate.preview.id)
         ),
         LOW_PROOF_SHOWN,
         MAX_CHECKED_LOW_PROOF,
-        compare
+        compare,
+        haveCeiling
       )
+      lowProof = low.matches
+      if (!low.complete) output.partial = true
       if (lowProof.length === 0) {
         lowProof = (await popularLowProof(up, recognised, args.flavors, shown)).slice(0, LOW_PROOF_SHOWN)
       }
@@ -304,16 +316,25 @@ export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolO
 }
 
 function cardLine(card: MatchCard) {
-  const status = card.can_make_now ? 'can make now' : `missing ${card.missing.join(', ')}`
-  return `- ${card.name} (${card.strength}): ${status}. ${card.url}`
+  const parts: string[] = []
+  if (card.can_make_now) parts.push('can make now')
+  if (card.missing.length) parts.push(`missing ${card.missing.join(', ')}`)
+  for (const dependency of card.depends_on ?? []) {
+    parts.push(`only if your ${dependency.you_said} is ${dependency.ingredient}`)
+  }
+  return `- ${card.name} (${card.strength}): ${parts.join('; ')}. ${card.url}`
+}
+
+function termLine(item: ResolvedTerm) {
+  const definite = item.matched_as.join(' / ')
+  const vague = item.could_be?.length ? `one bottle of ${item.could_be.join(' or ')} (not assumed)` : ''
+  return `${item.you_said} -> ${[definite, vague].filter(Boolean).join(', or ')}`
 }
 
 function findText(output: FindOutput) {
   const { bar } = output
   const lines: string[] = []
-  const recognised = bar.recognised.map(
-    (item) => `${item.you_said} -> ${item.matched_as.join(item.one_of ? ' or ' : ' / ')}`
-  )
+  const recognised = bar.recognised.map(termLine)
   if (recognised.length) lines.push(`Your bar: ${recognised.join('; ')}.`)
   if (bar.not_recognised.length) lines.push(`Not recognised: ${bar.not_recognised.join(', ')}.`)
   if (bar.not_checked?.length) {
@@ -325,6 +346,11 @@ function findText(output: FindOutput) {
     lines.push('Low or zero-proof options:', ...output.low_proof_options.map(cardLine))
   }
   if (output.unavailable) lines.push('Low or zero-proof options could not be loaded this time.')
+  if (output.partial) {
+    lines.push(
+      `Garçon compared up to ${MAX_CHECKED} recipes (${MAX_CHECKED_LOW_PROOF} low or zero-proof) for this answer, so others might match as well.`
+    )
+  }
   lines.push(`More ideas: ${output.more_ideas_url}`)
   return lines.join('\n')
 }

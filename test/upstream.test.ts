@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from '../src/index'
 import { bourbonBar } from './data'
-import { FakeApi, FakeCache, envelope, setup, text, tool } from './harness'
+import { type CacheLike, Upstream, UpstreamError } from '../src/upstream'
+import { FakeApi, FakeCache, envelope, erroredBody, setup, text, tool } from './harness'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -17,9 +18,25 @@ function failCatalogue(api: FakeApi, times: number, response: () => Response) {
 }
 
 describe('upstream failures', () => {
-  it('waits out a short Retry-After on a 429 and retries once', async () => {
+  it('waits out a one-second Retry-After on a 429, then retries once', async () => {
     const h = setup(new FakeApi(bourbonBar()), worker)
-    failCatalogue(h.api, 1, () => new Response('slow down', { status: 429, headers: { 'retry-after': '0' } }))
+    const times: number[] = []
+    let failures = 0
+    h.api.override('/cocktails?', (request) => {
+      times.push(Date.now())
+      return failures++ < 1
+        ? new Response('slow down', { status: 429, headers: { 'retry-after': '1' } })
+        : h.api.handleDefault(request)
+    })
+    const result = await tool(h, 'get_cocktail_recipe', RECIPE)
+    expect(result.isError).toBeFalsy()
+    expect(times).toHaveLength(2)
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(950)
+  })
+
+  it('retries a 503 whose body errors, keeping the status classification (audit 2, finding 3)', async () => {
+    const h = setup(new FakeApi(bourbonBar()), worker)
+    failCatalogue(h.api, 1, () => new Response(erroredBody(), { status: 503 }))
     const result = await tool(h, 'get_cocktail_recipe', RECIPE)
     expect(result.isError).toBeFalsy()
     expect(h.api.callsTo('/cocktails?')).toHaveLength(2)
@@ -42,39 +59,12 @@ describe('upstream failures', () => {
     expect(h.api.callsTo('/cocktails?')).toHaveLength(2)
   })
 
-  it('counts a timeout while reading the body as a failed attempt', async () => {
-    const h = setup(new FakeApi(bourbonBar()), worker)
-    failCatalogue(h.api, 1, () => {
-      const body = new ReadableStream({
-        start(controller) {
-          controller.error(new DOMException('The operation timed out.', 'TimeoutError'))
-        },
-      })
-      return new Response(body, { headers: { 'content-type': 'application/json' } })
-    })
-    const result = await tool(h, 'get_cocktail_recipe', RECIPE)
-    expect(result.isError).toBeFalsy()
-    expect(h.api.callsTo('/cocktails?')).toHaveLength(2)
-  })
-
   it('reports an HTML page as the service not answering, without retrying', async () => {
     const h = setup(new FakeApi(bourbonBar()), worker)
     failCatalogue(h.api, 9, () => new Response('<html>Bad gateway</html>', { headers: { 'content-type': 'text/html' } }))
     const result = await tool(h, 'get_cocktail_recipe', RECIPE)
     expect(result.isError).toBe(true)
     expect(text(result)).toMatch(/not answering right now/)
-    expect(h.api.callsTo('/cocktails?')).toHaveLength(1)
-  })
-
-  it('stops retrying at the call deadline', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] })
-    const h = setup(new FakeApi(bourbonBar()), worker)
-    failCatalogue(h.api, 9, () => {
-      vi.setSystemTime(Date.now() + 25_000)
-      return new Response('down', { status: 503 })
-    })
-    const result = await tool(h, 'get_cocktail_recipe', RECIPE)
-    expect(text(result)).toMatch(/too slow/)
     expect(h.api.callsTo('/cocktails?')).toHaveLength(1)
   })
 
@@ -119,5 +109,93 @@ describe('caching', () => {
     const result = await tool(fresh, 'get_cocktail_recipe', RECIPE)
     expect(result.isError).toBeFalsy()
     expect(h.api.calls).toHaveLength(calls)
+  })
+})
+
+/** A promise and the function that settles it, for stages that hang until the test releases them. */
+function gate<T>() {
+  let release!: (value: T) => void
+  const promise = new Promise<T>((resolve) => {
+    release = resolve
+  })
+  return { promise, release }
+}
+
+function upstreamWith(options: Partial<ConstructorParameters<typeof Upstream>[0]> = {}) {
+  return new Upstream({
+    cache: null,
+    permit: async () => true,
+    waitUntil: () => {},
+    baseUrl: 'https://deadline.test/api/v1',
+    ...options,
+  })
+}
+
+const OK = () => Response.json({ success: true, responseObject: { ok: true } })
+
+describe('deadlines with real timers', () => {
+  it('aborts a body that stalls after the headers, then retries (attempt timeout)', async () => {
+    const fetches: string[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      fetches.push(String(input))
+      if (fetches.length === 1) return new Response(new ReadableStream({ start() {} }), { status: 200 })
+      return OK()
+    })
+    const started = Date.now()
+    const value = await upstreamWith({ attemptTimeoutMs: 100 }).get('/stall-once', 60)
+    expect(value).toEqual({ ok: true })
+    expect(fetches).toHaveLength(2)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100)
+  })
+
+  it('gives up with "too slow" when every body stalls', async () => {
+    vi.stubGlobal('fetch', async () => new Response(new ReadableStream({ start() {} }), { status: 200 }))
+    await expect(upstreamWith({ attemptTimeoutMs: 80 }).get('/stall', 60)).rejects.toThrow(/too slow/)
+  })
+
+  it('times out a cache lookup that never answers, and a late hit cannot resume the call (audit 2, finding 4)', async () => {
+    const lookup = gate<Response | undefined>()
+    const fetchSpy = vi.fn(OK)
+    vi.stubGlobal('fetch', fetchSpy)
+    const cache: CacheLike = { match: () => lookup.promise, put: async () => {} }
+    const started = Date.now()
+    const outcome = upstreamWith({ cache, deadlineMs: 150 }).get('/slow-cache', 60)
+    await expect(outcome).rejects.toBeInstanceOf(UpstreamError)
+    await expect(outcome).rejects.toThrow(/too slow/)
+    expect(Date.now() - started).toBeLessThan(1_000)
+    lookup.release(new Response(JSON.stringify({ v: { late: true } })))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('times out a limiter that never answers, and a late permit starts no request (audit 2, finding 4)', async () => {
+    const permit = gate<boolean>()
+    const fetchSpy = vi.fn(OK)
+    vi.stubGlobal('fetch', fetchSpy)
+    const outcome = upstreamWith({ permit: () => permit.promise, deadlineMs: 150 }).get('/slow-limiter', 60)
+    await expect(outcome).rejects.toThrow(/too slow/)
+    permit.release(true)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('stops between attempts once the call deadline has passed', async () => {
+    const fetchSpy = vi.fn(async () => new Response('down', { status: 503, headers: { 'retry-after': '1' } }))
+    vi.stubGlobal('fetch', fetchSpy)
+    const started = Date.now()
+    await expect(upstreamWith({ deadlineMs: 300 }).get('/down', 60)).rejects.toThrow(/too slow/)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
+  it('treats a cache binding that throws synchronously as a miss', async () => {
+    vi.stubGlobal('fetch', OK)
+    const cache: CacheLike = {
+      match: () => {
+        throw new TypeError('cache binding broken')
+      },
+      put: async () => {},
+    }
+    expect(await upstreamWith({ cache }).get('/sync-throw', 60)).toEqual({ ok: true })
   })
 })
