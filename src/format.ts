@@ -1,6 +1,7 @@
 // Maps raw API objects to the compact shapes the tools return. Pure.
 
 import type { RawPreview, RawRecipe, RawRecipeIngredient } from './api-types'
+import type { CocktailCard, RecipeOutput } from './schemas'
 import { recipeUrl } from './site'
 import { slugify } from './text'
 
@@ -22,7 +23,7 @@ const FRACTIONS: readonly [number, string][] = [
 ]
 
 /** 1.5 as "1½", 0.67 as "⅔": the nearest kitchen fraction. */
-export function formatQuantity(value: number) {
+function formatQuantity(value: number) {
   const whole = Math.floor(value)
   const [fraction, glyph] = FRACTIONS.reduce((best, candidate) =>
     Math.abs(value - whole - candidate[0]) < Math.abs(value - whole - best[0])
@@ -48,7 +49,7 @@ function pluralize(unit: string, amount: number) {
  * "1½ oz (44 ml)", "2 dashes", "Top up". The API sends liquids in shots,
  * and 1 shot is 1 oz in its data.
  */
-export function formatAmount(entry: Pick<RawRecipeIngredient, 'amount' | 'unit'>) {
+function formatAmount(entry: Pick<RawRecipeIngredient, 'amount' | 'unit'>) {
   const unit = (entry.unit ?? '').trim()
   const key = unit.toLowerCase()
   if (key === 'top up with') return 'Top up'
@@ -71,17 +72,8 @@ export function slugOf(item: { slug?: string; name: string }) {
   return item.slug || slugify(item.name)
 }
 
-export function strengthLabel(level: string | undefined) {
+function strengthLabel(level: string | undefined) {
   return level?.trim() || 'Unknown'
-}
-
-export interface CocktailCard {
-  name: string
-  url: string
-  strength: string
-  flavors: string[]
-  base_spirit?: string
-  minutes?: number
 }
 
 export function toCard(preview: RawPreview): CocktailCard {
@@ -104,24 +96,6 @@ function linkedLabel(value: unknown): string | undefined {
     return typeof label === 'string' && label.trim() ? label.trim() : undefined
   }
   return undefined
-}
-
-export interface RecipeOutput {
-  name: string
-  url: string
-  full_recipe_public: boolean
-  description: string
-  strength: string
-  flavors: string[]
-  base_spirit?: string
-  abv_percent?: number
-  difficulty?: string
-  minutes?: number
-  glass?: string
-  ice?: string
-  garnish?: string
-  ingredients: { amount: string; name: string; optional?: boolean }[]
-  steps: string[]
 }
 
 export function toRecipe(recipe: RawRecipe): RecipeOutput {
@@ -153,7 +127,7 @@ export function toRecipe(recipe: RawRecipe): RecipeOutput {
   output.ingredients = (recipe.ingredients ?? [])
     .filter((entry) => entry.ingredient?.name)
     .map((entry) => {
-      const line: { amount: string; name: string; optional?: boolean } = {
+      const line: RecipeOutput['ingredients'][number] = {
         amount: formatAmount(entry),
         name: entry.ingredient.name,
       }

@@ -6,9 +6,12 @@
 <iframe id="frame" sandbox="allow-scripts allow-popups"></iframe>
 <script>
 // Plays an MCP Apps host: reads the widget resource and a live tool result
-// from the local server, answers ui/initialize, then sends the result.
+// from the local server, answers ui/initialize, sends tool-input, then the
+// result (or a cancellation).
+// Query: ?theme=dark, ?bar=gin,lime, ?case=error|cancel, ?server=http://127.0.0.1:8787/mcp
 const params = new URLSearchParams(location.search)
 const theme = params.get('theme') || 'light'
+const scenario = params.get('case') || 'result'
 const server = params.get('server') || 'http://127.0.0.1:8787/mcp'
 if (theme === 'dark') document.body.classList.add('dark')
 let id = 1
@@ -22,23 +25,28 @@ const log = []
 window.harnessLog = log
 ;(async () => {
   const res = await rpc('resources/read', { uri: 'ui://ask-garcon/cocktail-list-v1.html' })
-  const result = await rpc('tools/call', { name: 'find_cocktails_by_ingredients', arguments: { ingredients: (params.get('bar') || 'gin,limes,simple syrup,soda water').split(',') } })
+  const bar = scenario === 'error' ? [' , '] : (params.get('bar') || 'gin,limes,simple syrup,soda water').split(',')
+  const args = { ingredients: bar }
+  const result = await rpc('tools/call', { name: 'find_cocktails_by_ingredients', arguments: args })
   const frame = document.getElementById('frame')
+  const post = (message) => frame.contentWindow.postMessage({ jsonrpc: '2.0', ...message }, '*')
   window.addEventListener('message', (e) => {
     if (e.source !== frame.contentWindow) return
     const m = e.data; log.push(m.method || ('response ' + m.id))
     if (m.method === 'ui/initialize') {
-      frame.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2026-01-26', hostInfo: { name: 'harness', version: '1' }, hostCapabilities: { openLinks: {} }, hostContext: { theme } } }, '*')
+      post({ id: m.id, result: { protocolVersion: '2026-01-26', hostInfo: { name: 'harness', version: '1' }, hostCapabilities: { openLinks: {} }, hostContext: { theme } } })
     } else if (m.method === 'ui/notifications/initialized') {
-      frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: result }, '*')
+      post({ method: 'ui/notifications/tool-input', params: { arguments: args } })
+      if (scenario === 'cancel') post({ method: 'ui/notifications/tool-cancelled', params: { reason: 'user action' } })
+      else post({ method: 'ui/notifications/tool-result', params: result })
     } else if (m.method === 'ui/notifications/size-changed') {
       frame.style.height = m.params.height + 'px'
     } else if (m.method === 'ui/open-link') {
       document.getElementById('status').textContent = 'open-link: ' + m.params.url
-      frame.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: {} }, '*')
+      post({ id: m.id, result: {} })
     }
   })
   frame.srcdoc = res.contents[0].text
-  document.getElementById('status').textContent = 'Rendered ' + result.structuredContent.cocktails.length + ' cocktails'
+  document.getElementById('status').textContent = scenario + ': ' + (result.isError ? 'tool error' : (result.structuredContent.cocktails.length + ' cocktails'))
 })()
 </script></body></html>

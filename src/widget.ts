@@ -1,9 +1,7 @@
 // The one UI resource: a compact card list for find_cocktails_by_ingredients.
 // Plain HTML and a small script, no bundle. It speaks the MCP Apps bridge
-// (ui/initialize, ui/notifications/tool-result, ui/open-link) over
-// postMessage, so it runs in ChatGPT and in Claude, and falls back to
-// window.openai where only the ChatGPT globals exist. Every link opens the
-// canonical fixmeadrinkapp.com page.
+// (ui/initialize, tool-input, tool-result, tool-cancelled, ui/open-link) over
+// postMessage, and reads window.openai where only the ChatGPT globals exist.
 
 import { AGE_NOTE, BY_INGREDIENTS_TOOL_URL } from './site'
 
@@ -109,18 +107,31 @@ export const WIDGET_HTML = /* html */ `<!doctype html>
     return '<section><h2>' + esc(title) + '</h2><ul>' + items.map(function (i) { return card(i, images); }).join('') + '</ul></section>';
   }
 
+  function show(html) {
+    root.innerHTML = html;
+    reportSize();
+  }
+  function notice(text) {
+    show('<p class="empty">' + esc(text) + '</p>');
+  }
+
   function render(data, meta) {
-    if (!data || typeof data !== 'object') return;
-    var nested = meta && (meta.mcp_tool_result || meta.call_tool_result);
-    var images = (meta && meta.images) || (nested && nested._meta && nested._meta.images) || {};
+    if (!data || typeof data !== 'object') return notice('Garçon could not answer this time. Try again.');
+    var images = (meta && meta.images) || {};
     var html = '';
     if (data.note) html += '<p class="note">' + esc(data.note) + '</p>';
     html += section('Drinks from your bar', data.cocktails, images);
     html += section('Low or zero-proof', data.low_proof_options, images);
     if (!html) html = '<p class="empty">No matches yet. Add a base spirit, a citrus and a sweetener.</p>';
+    if (data.unavailable && data.unavailable.length) html += '<p class="note">Low or zero-proof options could not be loaded this time.</p>';
     html += '<footer><span>' + esc(AGE_NOTE) + '</span><a href="' + esc(MORE_URL) + '" data-href="' + esc(MORE_URL) + '" target="_blank" rel="noopener">More ideas on fixmeadrinkapp.com</a></footer>';
-    root.innerHTML = html;
-    reportSize();
+    show(html);
+  }
+
+  function renderResult(result) {
+    if (!result || !result.isError) return render(result && result.structuredContent, result && result._meta);
+    var text = (result.content || []).filter(function (c) { return c && c.type === 'text'; }).map(function (c) { return c.text; }).join(' ');
+    notice(text || 'Garçon could not answer this time. Try again.');
   }
 
   function openLink(url) {
@@ -157,9 +168,12 @@ export const WIDGET_HTML = /* html */ `<!doctype html>
       if (message.error) entry.reject(message.error); else entry.resolve(message.result);
       return;
     }
-    if (message.method === 'ui/notifications/tool-result') {
-      var params = message.params || {};
-      render(params.structuredContent, params._meta);
+    if (message.method === 'ui/notifications/tool-input') {
+      notice('Checking your bar…');
+    } else if (message.method === 'ui/notifications/tool-result') {
+      renderResult(message.params);
+    } else if (message.method === 'ui/notifications/tool-cancelled') {
+      notice('Search cancelled.');
     } else if (message.method === 'ui/notifications/host-context-changed') {
       applyTheme(message.params);
     }

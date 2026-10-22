@@ -7,14 +7,16 @@
   // Production hostname. Wrangler creates the DNS record and certificate on
   // deploy because the zone fixmeadrinkapp.com is on this Cloudflare account.
   "routes": [{ "pattern": "mcp.fixmeadrinkapp.com", "custom_domain": true }],
-  "workers_dev": true,
+  // No workers.dev origin: the Cache API only works on the custom domain.
+  "workers_dev": false,
   "ratelimits": [
     // Per client IP. ChatGPT and Claude call from shared IP ranges, so this
-    // is generous; CALLER_LIMITER handles individual ChatGPT users.
+    // is generous. CALLER_LIMITER adds a per-user limit when ChatGPT sends
+    // openai/subject; it is caller-supplied, so it never replaces this one.
     { "name": "IP_LIMITER", "namespace_id": "4101", "simple": { "limit": 300, "period": 60 } },
     { "name": "CALLER_LIMITER", "namespace_id": "4102", "simple": { "limit": 30, "period": 60 } },
-    // Requests that miss every cache and reach the recipe API, per location.
-    // 60 a minute (900 per 15 minutes) stays under the API's 1,000 per 15 minutes per IP.
+    // Requests that miss every cache and reach the recipe API. Counters are
+    // per Cloudflare location, so this is not a global cap; see README.
     { "name": "UPSTREAM_LIMITER", "namespace_id": "4103", "simple": { "limit": 60, "period": 60 } }
   ],
   "observability": { "enabled": true, "head_sampling_rate": 1 }

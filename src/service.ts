@@ -1,7 +1,5 @@
-// The four tools' behaviour, independent of MCP. Each function takes an
-// Upstream (cached API client) and returns structured output plus a short
-// text rendering. server.ts wires them to MCP; tests drive them with a fake
-// fetch.
+// The four tools' behaviour, independent of MCP. Each function takes the
+// call's Upstream and returns structured output plus a short text rendering.
 
 import type {
   RawGlossaryPreview,
@@ -14,35 +12,57 @@ import type {
   RawRecipe,
   RawRecipeList,
 } from './api-types'
-import { type CocktailCard, recipeText, slugOf, toCard, toRecipe, type RecipeOutput } from './format'
-import { STAPLES, aliasFor, cleanTerms, pickFromSearch, type ResolvedTerm } from './ingredients'
+import { recipeText, slugOf, toCard, toRecipe } from './format'
+import { STAPLES, cleanTerms, resolveAlias, resolveFromSearch } from './ingredients'
 import {
   type Candidate,
-  type RankedMatch,
+  type GroupCandidate,
+  type Match,
   type StrengthFilter,
+  bestMatches,
   candidatesFromGroups,
   compareWithBar,
   isLowProof,
   matchesFlavors,
   rankMatches,
 } from './ranking'
-import { AGE_NOTE, BY_INGREDIENTS_TOOL_URL, IMAGE_ORIGIN, recipeUrl } from './site'
-import { type TermOutput, closeNames, findTerms, glossaryTerm, hitName, hitUrl, ingredientTerm } from './terms'
+import type {
+  ExplainOutput,
+  FindOutput,
+  MatchCard,
+  RecipeOutput,
+  ResolvedTerm,
+  SimilarCard,
+  SimilarOutput,
+} from './schemas'
+import { BY_INGREDIENTS_TOOL_URL, IMAGE_ORIGIN, recipeUrl } from './site'
+import { closeNames, findTerms, glossaryTerm, hitName, hitUrl, ingredientTerm } from './terms'
 import { NO_MATCH, nameRank, normalize } from './text'
-import type { Upstream } from './upstream'
+import { type Upstream, UpstreamError } from './upstream'
 
 const DAY = 86_400
 const HOUR = 3_600
 const CATALOGUE_TTL = 12 * HOUR
 const CATALOGUE_PAGE_SIZE = 2000
-const DETAIL_POOL = 12
-const LOW_PROOF_POOL = 4
+
+const MAX_TERMS = 25
+const MAX_SEARCHES = 8
+const MAX_CHECKED = 16
+const MAX_CHECKED_LOW_PROOF = 6
+const LOW_PROOF_SHOWN = 2
+const POPULAR_LOW_PROOF_POOL = 4
+const MAX_SUGGESTIONS = 5
 
 export class ToolInputError extends Error {}
 
-// ---------------------------------------------------------------- data access
+export interface ToolOutput<T> {
+  readonly structured: T
+  readonly text: string
+  /** Widget-only data, hidden from the model. */
+  readonly meta?: Record<string, unknown>
+}
 
-export async function loadCatalogue(up: Upstream): Promise<RawPreview[]> {
+async function loadCatalogue(up: Upstream): Promise<RawPreview[]> {
   const path = (page: number) =>
     `/cocktails?page=${page}&pageSize=${CATALOGUE_PAGE_SIZE}&sortBy=popularityScore&sortOrder=desc`
   const first = await up.get<RawRecipeList>(path(1), CATALOGUE_TTL)
@@ -71,25 +91,24 @@ async function searchIngredients(up: Upstream, term: string): Promise<RawIngredi
   return Array.isArray(list) ? list : []
 }
 
-// ------------------------------------------------------------ recipe lookup
-
 const RECIPE_URL_PATTERN = /fixmeadrinkapp\.com\/recipes\/([a-z0-9-]+)/i
 
+/** The slug a query names: from a recipe URL, or the query itself. */
+function requestedSlug(query: string) {
+  return (query.match(RECIPE_URL_PATTERN)?.[1] ?? query).trim().toLowerCase()
+}
+
 /**
- * The catalogue entries that best answer a name, best first. An exact name
- * wins; among equally good matches free recipes come first, then popularity.
+ * The catalogue entries that best answer a name, best first. An exact slug
+ * or name wins; among equally good matches free recipes come first, then
+ * popularity.
  */
-export function rankRecipes(query: string, catalogue: readonly RawPreview[]) {
-  const fromUrl = query.match(RECIPE_URL_PATTERN)?.[1]
-  const q = fromUrl ?? query
-  const bySlug = catalogue.find((item) => item.slug && item.slug === q.trim().toLowerCase())
+function rankRecipes(query: string, catalogue: readonly RawPreview[]) {
+  const slug = requestedSlug(query)
+  const bySlug = catalogue.find((item) => item.slug?.toLowerCase() === slug)
   if (bySlug) return [bySlug]
   return catalogue
-    .map((item, index) => ({
-      item,
-      index,
-      rank: nameRank(q.replace(/-/g, ' '), item.name),
-    }))
+    .map((item, index) => ({ item, index, rank: nameRank(slug.replace(/-/g, ' '), item.name) }))
     .filter((entry) => entry.rank < NO_MATCH)
     .sort(
       (a, b) =>
@@ -100,132 +119,121 @@ export function rankRecipes(query: string, catalogue: readonly RawPreview[]) {
     .map((entry) => entry.item)
 }
 
-async function findRecipe(up: Upstream, query: string) {
-  const name = query.trim()
-  if (!name) throw new ToolInputError('Give the name of a cocktail, for example "Daiquiri".')
-  const catalogue = await loadCatalogue(up)
-  let ranked = rankRecipes(name, catalogue)
+interface RecipeMatch {
+  readonly best: RawPreview
+  readonly others: readonly RawPreview[]
+  readonly exact: boolean
+}
+
+async function findRecipe(up: Upstream, query: string): Promise<RecipeMatch> {
+  let ranked = rankRecipes(query, await loadCatalogue(up))
   if (ranked.length === 0) {
-    const params = new URLSearchParams({ query: name, pageSize: '10' })
+    const params = new URLSearchParams({ query, pageSize: '10' })
     const found = await up.get<RawPreview[]>(`/cocktails/search?${params}`, HOUR)
     ranked = Array.isArray(found) ? found : []
   }
-  return ranked
+  const [best, ...others] = ranked
+  if (!best) {
+    throw new ToolInputError(
+      `No cocktail called "${query}" in the Garçon catalogue. Check the spelling or try a shorter name.`
+    )
+  }
+  const exact =
+    best.slug?.toLowerCase() === requestedSlug(query) || normalize(best.name) === normalize(query)
+  return { best, others, exact }
 }
 
-// ------------------------------------------------------------ find cocktails
+function closestMatchNote(query: string) {
+  return `No recipe is named exactly "${query}". This is the closest match in the Garçon catalogue.`
+}
 
-export interface FindArgs {
+interface FindArgs {
   readonly ingredients: readonly string[]
   readonly strength?: StrengthFilter
   readonly flavors?: readonly string[]
   readonly limit?: number
 }
 
-export interface MatchCard extends CocktailCard {
-  have: string[]
-  missing: string[]
-  missing_garnish?: string[]
-  can_make_now: boolean
-}
-
-export interface FindOutput {
-  bar: {
-    recognised: ResolvedTerm[]
-    not_recognised: string[]
-    assumed_staples: string[]
-  }
-  cocktails: MatchCard[]
-  low_proof_options: MatchCard[]
-  note?: string
-  more_ideas_url: string
-}
-
-export interface ToolOutput<T> {
-  readonly structured: T
-  readonly text: string
-  /** Widget-only data, hidden from the model. */
-  readonly meta?: Record<string, unknown>
-}
-
 async function resolveTerms(up: Upstream, terms: readonly string[]) {
+  const searched = new Set(terms.filter((term) => !resolveAlias(term)).slice(0, MAX_SEARCHES))
   const resolved = await Promise.all(
-    terms.map(async (term): Promise<ResolvedTerm> => {
-      const alias = aliasFor(term)
-      if (alias) return { you_said: term, matched_as: [...alias] }
-      const options = await searchIngredients(up, term)
-      return { you_said: term, matched_as: pickFromSearch(term, options) }
+    terms.map(async (term) => {
+      if (!searched.has(term)) return resolveAlias(term)
+      return resolveFromSearch(term, await searchIngredients(up, term))
     })
   )
-  return {
-    recognised: resolved.filter((item) => item.matched_as.length > 0),
-    notRecognised: resolved.filter((item) => item.matched_as.length === 0).map((item) => item.you_said),
-  }
+  const recognised: ResolvedTerm[] = []
+  const notRecognised: string[] = []
+  const notChecked: string[] = []
+  resolved.forEach((item, index) => {
+    if (!item) notChecked.push(terms[index])
+    else if (item.matched_as.length === 0) notRecognised.push(item.you_said)
+    else recognised.push(item)
+  })
+  return { recognised, notRecognised, notChecked }
 }
 
 async function compareCandidates(
   up: Upstream,
   candidates: readonly Candidate[],
-  bar: ReadonlySet<string>
-): Promise<RankedMatch<RawRecipe>[]> {
+  bar: readonly ResolvedTerm[]
+): Promise<Match[]> {
   const details = await Promise.all(
     candidates.map((candidate) => recipeBySlug(up, slugOf(candidate.preview)))
   )
-  const result: RankedMatch<RawRecipe>[] = []
-  details.forEach((recipe, index) => {
-    if (!recipe || recipe.isLocked) return
-    result.push({ candidate: candidates[index], comparison: compareWithBar(recipe, bar), extra: recipe })
-  })
-  return result
+  return details.flatMap((recipe, index) =>
+    recipe && !recipe.isLocked
+      ? [{ candidate: candidates[index], comparison: compareWithBar(recipe, bar) }]
+      : []
+  )
 }
 
-function toMatchCard(match: RankedMatch<RawRecipe>): MatchCard {
+/** The most popular free low-proof recipes, ranked by what the bar is missing. */
+async function popularLowProof(
+  up: Upstream,
+  bar: readonly ResolvedTerm[],
+  flavors: readonly string[] | undefined,
+  exclude: ReadonlySet<string>
+): Promise<Match[]> {
+  const candidates = (await loadCatalogue(up))
+    .filter(
+      (item) =>
+        item.isFree === true &&
+        isLowProof(item.strengthLevel) &&
+        matchesFlavors(item.flavorNotes, flavors) &&
+        !exclude.has(item.id)
+    )
+    .slice(0, POPULAR_LOW_PROOF_POOL)
+    .map((preview, order) => ({ preview, order }))
+  return rankMatches(await compareCandidates(up, candidates, bar))
+}
+
+function toMatchCard({ candidate, comparison }: Match): MatchCard {
   const card: MatchCard = {
-    ...toCard(match.candidate.preview),
-    have: match.comparison.have,
-    missing: match.comparison.missing,
-    can_make_now: match.comparison.missing.length === 0,
+    ...toCard(candidate.preview),
+    have: comparison.have,
+    missing: comparison.missing,
+    can_make_now: comparison.missing.length === 0,
   }
-  if (match.comparison.missingGarnish.length) card.missing_garnish = match.comparison.missingGarnish
+  if (comparison.missingGarnish.length) card.missing_garnish = comparison.missingGarnish
   return card
 }
 
-function byFewestMissing(matches: RankedMatch<RawRecipe>[]) {
-  return matches
-    .slice()
-    .sort(
-      (a, b) =>
-        a.comparison.missing.length - b.comparison.missing.length ||
-        b.comparison.have.length - a.comparison.have.length ||
-        a.candidate.order - b.candidate.order
-    )
-}
-
-/** Free low and zero-proof recipes from the catalogue, most popular first. */
-function lowProofCatalogue(catalogue: readonly RawPreview[], flavors?: readonly string[]): Candidate[] {
-  return catalogue
-    .filter((item) => item.isFree === true && isLowProof(item.strengthLevel))
-    .filter((item) => matchesFlavors(item.flavorNotes, flavors))
-    .map((preview, order) => ({ preview, groupRank: 3, order }))
-}
-
-function imagesFor(cards: readonly CocktailCard[], previews: readonly RawPreview[]) {
-  const byUrl: Record<string, string> = {}
-  for (const preview of previews) {
-    if (preview.imageUrl?.startsWith(IMAGE_ORIGIN)) byUrl[recipeUrl(slugOf(preview))] = preview.imageUrl
-  }
+function imagesFor(matches: readonly Match[]) {
   return Object.fromEntries(
-    cards.filter((card) => byUrl[card.url]).map((card) => [card.url, byUrl[card.url]])
+    matches
+      .filter((match) => match.candidate.preview.imageUrl?.startsWith(IMAGE_ORIGIN))
+      .map((match) => [recipeUrl(slugOf(match.candidate.preview)), match.candidate.preview.imageUrl])
   )
 }
 
 export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolOutput<FindOutput>> {
-  const terms = cleanTerms(args.ingredients).slice(0, 25)
+  const terms = cleanTerms(args.ingredients).slice(0, MAX_TERMS)
   if (terms.length === 0) {
     throw new ToolInputError('List at least one bottle or ingredient, for example ["gin", "lime", "sugar"].')
   }
-  const limit = Math.min(Math.max(args.limit ?? 5, 1), 8)
-  const { recognised, notRecognised } = await resolveTerms(up, terms)
+  const limit = args.limit ?? 5
+  const { recognised, notRecognised, notChecked } = await resolveTerms(up, terms)
 
   const output: FindOutput = {
     bar: { recognised, not_recognised: notRecognised, assumed_staples: [...STAPLES] },
@@ -233,6 +241,7 @@ export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolO
     low_proof_options: [],
     more_ideas_url: BY_INGREDIENTS_TOOL_URL,
   }
+  if (notChecked.length) output.bar.not_checked = notChecked
 
   if (recognised.length === 0) {
     output.note =
@@ -240,168 +249,127 @@ export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolO
     return { structured: output, text: findText(output) }
   }
 
-  const barNames = [...new Set([...recognised.flatMap((item) => item.matched_as), ...STAPLES])].sort()
-  const bar = new Set(barNames)
+  const apiBar = [...new Set([...recognised.flatMap((item) => item.matched_as), ...STAPLES])].sort()
   const groups =
-    (await up.post<RawMatchGroups>('/cocktails/matches', { ingredients: barNames }, HOUR)) ?? {}
+    (await up.post<RawMatchGroups>('/cocktails/matches', { ingredients: apiBar }, HOUR)) ?? {}
+  const compare = (batch: readonly GroupCandidate[]) => compareCandidates(up, batch, recognised)
 
-  const filters = { strength: args.strength, flavors: args.flavors }
-  const pool = candidatesFromGroups(groups, filters).slice(0, DETAIL_POOL)
-  const lowPool =
-    args.strength === 'zero_or_low'
-      ? []
-      : candidatesFromGroups(groups, { strength: 'zero_or_low', flavors: args.flavors }).slice(0, LOW_PROOF_POOL)
+  let cocktails = await bestMatches(
+    candidatesFromGroups(groups, { strength: args.strength, flavors: args.flavors }),
+    limit,
+    MAX_CHECKED,
+    compare
+  )
+  let lowProof: Match[] = []
 
-  const [compared, comparedLow] = await Promise.all([
-    compareCandidates(up, pool, bar),
-    compareCandidates(up, lowPool, bar),
-  ])
-  output.cocktails = rankMatches(compared).slice(0, limit).map(toMatchCard)
-  output.low_proof_options = rankMatches(comparedLow).slice(0, 2).map(toMatchCard)
-
-  // Low and zero-proof drinks are always offered. When the bar matches none,
-  // fall back to the most popular free ones and say so.
-  const needFallback =
-    args.strength === 'zero_or_low' ? output.cocktails.length === 0 : output.low_proof_options.length === 0
-  let catalogue: RawPreview[] = []
-  if (needFallback) {
-    catalogue = await loadCatalogue(up)
-    const fallback = byFewestMissing(
-      await compareCandidates(up, lowProofCatalogue(catalogue, args.flavors).slice(0, LOW_PROOF_POOL), bar)
-    )
-    if (args.strength === 'zero_or_low') {
-      output.cocktails = fallback.slice(0, limit).map(toMatchCard)
+  if (args.strength === 'zero_or_low') {
+    if (cocktails.length === 0) {
+      cocktails = (await popularLowProof(up, recognised, args.flavors, new Set())).slice(0, limit)
       output.note =
         'No low or zero-proof recipe uses your bar, so these are popular low-proof drinks with what you would need to buy.'
-    } else {
-      output.low_proof_options = fallback.slice(0, 2).map(toMatchCard)
+    }
+  } else {
+    const shown = new Set(cocktails.map((match) => match.candidate.preview.id))
+    try {
+      lowProof = await bestMatches(
+        candidatesFromGroups(groups, { strength: 'zero_or_low', flavors: args.flavors }).filter(
+          (candidate) => !shown.has(candidate.preview.id)
+        ),
+        LOW_PROOF_SHOWN,
+        MAX_CHECKED_LOW_PROOF,
+        compare
+      )
+      if (lowProof.length === 0) {
+        lowProof = (await popularLowProof(up, recognised, args.flavors, shown)).slice(0, LOW_PROOF_SHOWN)
+      }
+    } catch (error) {
+      if (!(error instanceof UpstreamError)) throw error
+      output.unavailable = ['low_proof_options']
     }
   }
 
+  output.cocktails = cocktails.map(toMatchCard)
+  output.low_proof_options = lowProof.map(toMatchCard)
   if (output.cocktails.length === 0 && !output.note) {
     output.note =
       args.strength || args.flavors?.length
         ? 'No free recipe matched both your bar and those filters. Try without the filters.'
         : 'No free recipe uses those ingredients yet. Adding a base spirit, a citrus and a sweetener opens up the most drinks.'
   }
-
-  const previews = [
-    ...pool.map((c) => c.preview),
-    ...lowPool.map((c) => c.preview),
-    ...catalogue.filter((item) => isLowProof(item.strengthLevel)),
-  ]
   return {
     structured: output,
     text: findText(output),
-    meta: { images: imagesFor([...output.cocktails, ...output.low_proof_options], previews) },
+    meta: { images: imagesFor([...cocktails, ...lowProof]) },
   }
 }
 
 function cardLine(card: MatchCard) {
-  const status = card.can_make_now
-    ? 'can make now'
-    : `missing ${card.missing.join(', ')}`
+  const status = card.can_make_now ? 'can make now' : `missing ${card.missing.join(', ')}`
   return `- ${card.name} (${card.strength}): ${status}. ${card.url}`
 }
 
 function findText(output: FindOutput) {
+  const { bar } = output
   const lines: string[] = []
-  const recognised = output.bar.recognised.map((item) => `${item.you_said} -> ${item.matched_as.join(' / ')}`)
+  const recognised = bar.recognised.map(
+    (item) => `${item.you_said} -> ${item.matched_as.join(item.one_of ? ' or ' : ' / ')}`
+  )
   if (recognised.length) lines.push(`Your bar: ${recognised.join('; ')}.`)
-  if (output.bar.not_recognised.length) lines.push(`Not recognised: ${output.bar.not_recognised.join(', ')}.`)
+  if (bar.not_recognised.length) lines.push(`Not recognised: ${bar.not_recognised.join(', ')}.`)
+  if (bar.not_checked?.length) {
+    lines.push(`Not looked up (${MAX_SEARCHES} unfamiliar names per request): ${bar.not_checked.join(', ')}.`)
+  }
   if (output.note) lines.push(output.note)
-  if (output.cocktails.length) {
-    lines.push('Drinks, closest first:')
-    lines.push(...output.cocktails.map(cardLine))
-  }
+  if (output.cocktails.length) lines.push('Drinks, closest first:', ...output.cocktails.map(cardLine))
   if (output.low_proof_options.length) {
-    lines.push('Low or zero-proof options:')
-    lines.push(...output.low_proof_options.map(cardLine))
+    lines.push('Low or zero-proof options:', ...output.low_proof_options.map(cardLine))
   }
+  if (output.unavailable) lines.push('Low or zero-proof options could not be loaded this time.')
   lines.push(`More ideas: ${output.more_ideas_url}`)
-  lines.push(AGE_NOTE)
   return lines.join('\n')
 }
 
-// ---------------------------------------------------------------- get recipe
-
-export interface RecipeToolOutput extends RecipeOutput {
-  note?: string
-  other_matches?: { name: string; url: string }[]
-  free_alternatives?: CocktailCard[]
-}
-
-export async function getRecipe(up: Upstream, args: { name: string }): Promise<ToolOutput<RecipeToolOutput>> {
-  const ranked = await findRecipe(up, args.name)
-  const best = ranked[0]
-  if (!best) {
-    throw new ToolInputError(
-      `No cocktail called "${args.name}" in the Garçon catalogue. Check the spelling or try a shorter name.`
-    )
-  }
+export async function getRecipe(up: Upstream, args: { name: string }): Promise<ToolOutput<RecipeOutput>> {
+  const { best, others, exact } = await findRecipe(up, args.name)
   const raw = await recipeBySlug(up, slugOf(best))
   if (!raw) throw new ToolInputError(`The recipe page for "${best.name}" is not available right now.`)
 
-  const output: RecipeToolOutput = toRecipe(raw)
-  const asked = args.name.trim()
-  const askedBySlug = RECIPE_URL_PATTERN.test(asked) || asked === best.slug
-  if (!askedBySlug && normalize(best.name) !== normalize(asked)) {
-    output.note = `No recipe is named exactly "${asked}". This is the closest match in the Garçon catalogue.`
-    const others = ranked.slice(1, 4)
+  const output = toRecipe(raw)
+  if (!exact) {
+    output.note = closestMatchNote(args.name)
     if (others.length) {
-      output.other_matches = others.map((item) => ({ name: item.name, url: recipeUrl(slugOf(item)) }))
+      output.other_matches = others.slice(0, 3).map((item) => ({ name: item.name, url: recipeUrl(slugOf(item)) }))
     }
   }
   if (raw.isLocked) {
-    const similar = (await similarTo(up, raw.id)).filter((item) => item.isFree === true)
-    if (similar.length) output.free_alternatives = similar.slice(0, 3).map(toCard)
+    try {
+      const free = (await similarTo(up, raw.id)).filter((item) => item.isFree === true)
+      if (free.length) output.free_alternatives = free.slice(0, 3).map(toCard)
+    } catch (error) {
+      if (!(error instanceof UpstreamError)) throw error
+      output.unavailable = ['free_alternatives']
+    }
   }
 
   const lines = output.note ? [output.note, recipeText(output)] : [recipeText(output)]
-  if (output.free_alternatives?.length) {
-    lines.push('Free recipes like it:', ...output.free_alternatives.map((c) => `- ${c.name}: ${c.url}`))
+  if (output.free_alternatives) {
+    lines.push('Free recipes like it:', ...output.free_alternatives.map((card) => `- ${card.name}: ${card.url}`))
   }
-  if (output.other_matches?.length) {
-    lines.push(`Other matches: ${output.other_matches.map((m) => m.name).join(', ')}`)
+  if (output.unavailable) lines.push('Free recipes like it could not be loaded this time.')
+  if (output.other_matches) {
+    lines.push(`Other matches: ${output.other_matches.map((match) => match.name).join(', ')}`)
   }
-  if (!isLowProof(output.strength)) lines.push(AGE_NOTE)
-  const meta = best.imageUrl?.startsWith(IMAGE_ORIGIN) ? { image: best.imageUrl } : undefined
-  return { structured: output, text: lines.join('\n'), meta }
-}
-
-// ------------------------------------------------------------ similar drinks
-
-export interface SimilarCard extends CocktailCard {
-  full_recipe_public: boolean
-}
-
-export interface SimilarOutput {
-  source: { name: string; url: string }
-  suggestions: SimilarCard[]
-  low_proof_options: SimilarCard[]
-  note?: string
+  return { structured: output, text: lines.join('\n') }
 }
 
 function similarCard(preview: RawPreview): SimilarCard {
   return { ...toCard(preview), full_recipe_public: preview.isFree === true }
 }
 
-export async function suggestSimilar(
-  up: Upstream,
-  args: { name: string; low_proof?: boolean }
-): Promise<ToolOutput<SimilarOutput>> {
-  const ranked = await findRecipe(up, args.name)
-  const source = ranked[0]
-  if (!source) {
-    throw new ToolInputError(
-      `No cocktail called "${args.name}" in the Garçon catalogue. Check the spelling or try a shorter name.`
-    )
-  }
-  const [similar, catalogue] = await Promise.all([similarTo(up, source.id), loadCatalogue(up)])
-
-  // Low-proof drinks that share a flavour (or the base) with the source.
+/** Free low-proof recipes that share a flavour or the base spirit, closest first. */
+function lowProofLike(catalogue: readonly RawPreview[], source: RawPreview) {
   const flavors = new Set((source.flavorNotes ?? []).map(normalize))
-  const lowProof = catalogue
+  return catalogue
     .filter((item) => item.isFree === true && isLowProof(item.strengthLevel) && item.id !== source.id)
     .map((item, index) => ({
       item,
@@ -410,62 +378,72 @@ export async function suggestSimilar(
         (item.flavorNotes ?? []).filter((note) => flavors.has(normalize(note))).length +
         (item.baseSpirit && item.baseSpirit === source.baseSpirit ? 1 : 0),
     }))
+    .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map((entry) => entry.item)
+}
+
+function uniqueById(items: readonly RawPreview[]) {
+  return items.filter((item, index) => items.findIndex((other) => other.id === item.id) === index)
+}
+
+export async function suggestSimilar(
+  up: Upstream,
+  args: { name: string; low_proof?: boolean }
+): Promise<ToolOutput<SimilarOutput>> {
+  const { best: source, exact } = await findRecipe(up, args.name)
+  const [similar, catalogue] = await Promise.all([similarTo(up, source.id), loadCatalogue(up)])
+  const lowProof = lowProofLike(catalogue, source)
 
   const output: SimilarOutput = {
     source: { name: source.name, url: recipeUrl(slugOf(source)) },
     suggestions: [],
     low_proof_options: [],
   }
+  if (!exact) output.note = closestMatchNote(args.name)
   if (args.low_proof) {
-    const lowSimilar = similar.filter((item) => isLowProof(item.strengthLevel))
-    output.suggestions = [...lowSimilar, ...lowProof]
-      .filter((item, index, all) => all.findIndex((other) => other.id === item.id) === index)
-      .slice(0, 4)
-      .map(similarCard)
-    output.note = 'Low and zero-proof drinks that share flavours with it.'
+    const suggestions = uniqueById([...similar.filter((item) => isLowProof(item.strengthLevel)), ...lowProof])
+    output.suggestions = suggestions.slice(0, MAX_SUGGESTIONS).map(similarCard)
   } else {
     // Free recipes first: their full recipe is public.
-    output.suggestions = similar
-      .slice()
+    const suggestions = [...similar]
       .sort((a, b) => Number(b.isFree === true) - Number(a.isFree === true))
-      .map(similarCard)
-    output.low_proof_options = lowProof.slice(0, 2).map(similarCard)
+      .slice(0, MAX_SUGGESTIONS)
+    const shown = new Set(suggestions.map((item) => item.id))
+    output.suggestions = suggestions.map(similarCard)
+    output.low_proof_options = lowProof.filter((item) => !shown.has(item.id)).slice(0, LOW_PROOF_SHOWN).map(similarCard)
   }
 
-  const lines = [`Drinks like ${output.source.name} (${output.source.url}):`]
+  const kind = args.low_proof ? 'Low or zero-proof drinks' : 'Drinks'
+  const lines = output.note ? [output.note] : []
+  lines.push(`${kind} like ${output.source.name} (${output.source.url}):`)
   for (const card of output.suggestions) {
-    lines.push(`- ${card.name} (${card.strength}, ${card.flavors.join(', ') || 'no notes'}): ${card.url}${card.full_recipe_public ? '' : ' [premium recipe]'}`)
+    const flavors = card.flavors.join(', ') || 'no notes'
+    lines.push(`- ${card.name} (${card.strength}, ${flavors}): ${card.url}${card.full_recipe_public ? '' : ' [premium recipe]'}`)
   }
-  if (output.suggestions.length === 0) lines.push('No similar drinks found.')
+  if (output.suggestions.length === 0) lines.push('None found in the Garçon catalogue.')
   if (output.low_proof_options.length) {
-    lines.push('Low or zero-proof options:', ...output.low_proof_options.map((c) => `- ${c.name}: ${c.url}`))
+    lines.push(
+      'Low or zero-proof options with shared flavours:',
+      ...output.low_proof_options.map((card) => `- ${card.name}: ${card.url}`)
+    )
   }
   return { structured: output, text: lines.join('\n') }
 }
 
-// --------------------------------------------------------------- explain term
-
-export interface ExplainOutput extends TermOutput {
-  also_matches?: { name: string; url: string }[]
-}
-
 export async function explainTerm(up: Upstream, args: { term: string }): Promise<ToolOutput<ExplainOutput>> {
-  const term = args.term.trim()
-  if (!term) throw new ToolInputError('Give a spirit, ingredient or bar term, for example "mezcal" or "dry shake".')
   const [glossary, pages] = await Promise.all([
     up.get<RawGlossaryPreview[]>('/glossary', DAY),
     up.get<RawIngredientPagePreview[]>('/ingredient-pages', DAY),
   ])
   const glossaryList = Array.isArray(glossary) ? glossary : []
   const pageList = Array.isArray(pages) ? pages : []
-  const hits = findTerms(term, glossaryList, pageList)
+  const hits = findTerms(args.term, glossaryList, pageList)
   const best = hits[0]
   if (!best) {
-    const close = closeNames(term, glossaryList, pageList)
+    const close = closeNames(args.term, glossaryList, pageList)
     throw new ToolInputError(
-      `Garçon has no page for "${term}" yet.${close.length ? ` Close matches: ${close.join(', ')}.` : ''}`
+      `Garçon has no page for "${args.term}" yet.${close.length ? ` Close matches: ${close.join(', ')}.` : ''}`
     )
   }
 

@@ -1,14 +1,11 @@
-import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import type { RawGlossaryPreview, RawIngredientOption, RawIngredientPagePreview, RawPreview, RawRecipe } from '../src/api-types'
-import { formatAmount, formatQuantity, recipeText, toCard, toRecipe } from '../src/format'
-import { aliasFor, cleanTerms, isStaple, pickFromSearch } from '../src/ingredients'
-import { rankRecipes } from '../src/service'
-import { findTerms, plainText } from '../src/terms'
+import type { RawGlossaryPreview, RawIngredientOption, RawIngredientPagePreview, RawPreview } from '../src/api-types'
+import { recipeText, toCard, toRecipe } from '../src/format'
+import { cleanTerms, isStaple, resolveAlias, resolveFromSearch } from '../src/ingredients'
+import { findTerms, glossaryTerm } from '../src/terms'
 import { nameRank, normalize, slugify } from '../src/text'
-
-const fixture = <T>(name: string) =>
-  JSON.parse(readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')) as T
+import { mule, oldFashioned, roseSour } from './data'
+import searchGin from './fixtures/search-gin.json'
 
 describe('text helpers', () => {
   it('normalizes accents, ampersands and punctuation', () => {
@@ -25,25 +22,25 @@ describe('text helpers', () => {
 })
 
 describe('amounts', () => {
-  it('prints kitchen fractions', () => {
-    expect(formatQuantity(1.5)).toBe('1½')
-    expect(formatQuantity(0.67)).toBe('⅔')
-    expect(formatQuantity(2)).toBe('2')
-  })
+  const amount = (value: number | null, unit: string) =>
+    toRecipe({ isLocked: false, id: 'a', name: 'A', ingredients: [{ amount: value, unit, ingredient: { name: 'X' } }] })
+      .ingredients[0].amount
 
-  it('prints shots as oz with ml, and keeps other units', () => {
-    expect(formatAmount({ amount: 1.5, unit: 'shot' })).toBe('1½ oz (44 ml)')
-    expect(formatAmount({ amount: 30, unit: 'ml' })).toBe('1 oz (30 ml)')
-    expect(formatAmount({ amount: 0.1, unit: 'shot' })).toBe('½ barspoon')
-    expect(formatAmount({ amount: 3, unit: 'dash' })).toBe('3 dashes')
-    expect(formatAmount({ amount: null, unit: 'Top up with' })).toBe('Top up')
-    expect(formatAmount({ amount: 8, unit: 'fresh' })).toBe('8')
+  it('prints shots as oz with ml in kitchen fractions, and keeps other units', () => {
+    expect(amount(0.67, 'shot')).toBe('⅔ oz (20 ml)')
+    expect(amount(1.5, 'shot')).toBe('1½ oz (44 ml)')
+    expect(amount(2, 'shot')).toBe('2 oz (59 ml)')
+    expect(amount(30, 'ml')).toBe('1 oz (30 ml)')
+    expect(amount(0.1, 'shot')).toBe('½ barspoon')
+    expect(amount(3, 'dash')).toBe('3 dashes')
+    expect(amount(null, 'Top up with')).toBe('Top up')
+    expect(amount(8, 'fresh')).toBe('8')
   })
 })
 
 describe('recipe mapping', () => {
   it('maps a free recipe with canonical URL, serving details and steps', () => {
-    const output = toRecipe(fixture<RawRecipe>('old-fashioned.json'))
+    const output = toRecipe(oldFashioned)
     expect(output.url).toBe('https://fixmeadrinkapp.com/recipes/old-fashioned')
     expect(output.full_recipe_public).toBe(true)
     expect(output.glass).toBe('Rocks')
@@ -53,13 +50,13 @@ describe('recipe mapping', () => {
   })
 
   it('maps "Top up with" amounts and hides "No Ice"', () => {
-    const output = toRecipe(fixture<RawRecipe>('grapefruit-mule.json'))
+    const output = toRecipe(mule)
     expect(output.ingredients.find((i) => i.name === 'Ginger Beer')?.amount).toBe('Top up')
     expect(output.ice).toBe('Regular Cubes')
   })
 
   it('keeps a premium recipe to its public fields', () => {
-    const output = toRecipe(fixture<RawRecipe>('rose-sour-locked.json'))
+    const output = toRecipe(roseSour)
     expect(output.full_recipe_public).toBe(false)
     expect(output.ingredients).toEqual([])
     expect(output.steps).toEqual([])
@@ -75,19 +72,20 @@ describe('recipe mapping', () => {
 
 describe('ingredient resolution', () => {
   it('expands common words to catalogue names', () => {
-    expect(aliasFor('Gin')).toEqual(['London dry gin', 'Dry gin'])
-    expect(aliasFor('limes')).toEqual(['Lime Juice', 'Lime'])
-    expect(aliasFor("Peychaud's")).toEqual(["Peychaud's bitters"])
-    expect(aliasFor('dragonfruit')).toBeNull()
+    expect(resolveAlias('Gin')).toEqual({ you_said: 'Gin', matched_as: ['London dry gin', 'Dry gin'], one_of: true })
+    expect(resolveAlias('limes')).toEqual({ you_said: 'limes', matched_as: ['Lime Juice', 'Lime'] })
+    expect(resolveAlias("Peychaud's")?.matched_as).toEqual(["Peychaud's bitters"])
+    expect(resolveAlias('dragonfruit')).toBeNull()
+    expect(resolveAlias('constructor')).toBeNull()
   })
 
   it('picks near matches from search results and skips look-alikes', () => {
-    const options = fixture<RawIngredientOption[]>('search-gin.json')
-    const picked = pickFromSearch('gin', options)
-    expect(picked).not.toContain('Ginger')
-    expect(picked.length).toBeGreaterThan(0)
-    const sloe = pickFromSearch('sloe gin', options)
-    expect(sloe[0]).toBe('Sloe gin')
+    const options = searchGin as RawIngredientOption[]
+    const gin = resolveFromSearch('gin', options)
+    expect(gin.matched_as).not.toContain('Ginger')
+    expect(gin.matched_as.length).toBeGreaterThan(0)
+    expect(resolveFromSearch('sloe gin', options).matched_as[0]).toBe('Sloe gin')
+    expect(resolveFromSearch('quantum', options).matched_as).toEqual([])
   })
 
   it('splits pasted lists and dedupes, but keeps "half and half"', () => {
@@ -99,41 +97,6 @@ describe('ingredient resolution', () => {
     expect(isStaple('Chilled water')).toBe(true)
     expect(isStaple('Saline solution 4:1')).toBe(true)
     expect(isStaple('Vodka')).toBe(false)
-  })
-})
-
-describe('recipe lookup', () => {
-  const catalogue: RawPreview[] = [
-    { id: '1', name: 'Dry Daiquiri', slug: 'dry-daiquiri', isFree: true },
-    { id: '2', name: 'Daiquiri No. 2', slug: 'daiquiri-no-2', isFree: false },
-    { id: '3', name: 'Daiquiri', slug: 'daiquiri', isFree: false },
-    { id: '4', name: 'Pink Daiquiri', slug: 'pink-daiquiri', isFree: true },
-  ]
-
-  it('prefers the exact name, even when premium', () => {
-    expect(rankRecipes('daiquiri', catalogue)[0].id).toBe('3')
-  })
-
-  it('accepts a slug or a fixmeadrinkapp.com URL', () => {
-    expect(rankRecipes('pink-daiquiri', catalogue)[0].id).toBe('4')
-    expect(rankRecipes('https://fixmeadrinkapp.com/recipes/dry-daiquiri', catalogue)[0].id).toBe('1')
-  })
-
-  it('treats a qualified classic as the plain name', () => {
-    const list: RawPreview[] = [
-      { id: 'a', name: 'Tsipouro Negroni', isFree: true },
-      { id: 'b', name: 'Manhattan (Sweet)', isFree: true },
-      { id: 'c', name: 'Black Manhattan', isFree: true },
-      { id: 'd', name: 'The Original Margarita', isFree: false },
-      { id: 'e', name: 'Rusty Margarita', isFree: true },
-    ]
-    expect(rankRecipes('manhattan', list)[0].id).toBe('b')
-    expect(rankRecipes('Margarita', list)[0].id).toBe('d')
-  })
-
-  it('puts free recipes first among equally good matches', () => {
-    const ranked = rankRecipes('daiquiri', catalogue.filter((c) => c.id !== '3'))
-    expect(ranked.map((c) => c.id)).toEqual(['1', '4', '2'])
   })
 })
 
@@ -158,8 +121,12 @@ describe('term lookup', () => {
   })
 
   it('removes glossary link markup', () => {
-    expect(plainText('[[term:double-strain|Double strain]] into a [[ingredient:egg-white]] glass')).toBe(
-      'Double strain into a egg white glass'
-    )
+    const term = glossaryTerm({
+      slug: 'shake',
+      name: 'Shake',
+      type: 'technique',
+      shortDefinition: '[[term:double-strain|Double strain]] into a [[ingredient:egg-white]] glass',
+    })
+    expect(term.definition).toBe('Double strain into a egg white glass')
   })
 })

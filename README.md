@@ -19,13 +19,13 @@ Four read-only tools. All four carry `readOnlyHint: true`, `destructiveHint: fal
 | `explain_bar_term` | "What is mezcal?", "How do I dry shake?" | Ingredient page (taste, made from, ABV range, styles, substitutes incl. zero-proof, example drinks) or glossary term (definition, facts, how-to steps, related terms), with URL. |
 | `suggest_similar_cocktail` | "Something like a Moscow Mule." `low_proof: true` for lighter drinks only. | Similar drinks (free recipes first, premium flagged) plus low or zero-proof options that share its flavours. |
 
-Responsible-drinking posture: tool descriptions and the server instructions say the drinks are for adults of legal drinking age; find and similar always include low or zero-proof options; no tool gives health or nutrition advice (calorie data from the API is deliberately not returned). Text results end with "For adults of legal drinking age. Please drink responsibly." where the drink contains alcohol.
+Responsible-drinking posture: tool descriptions and the server instructions say the drinks are for adults of legal drinking age; find and similar always include low or zero-proof options; no tool gives health or nutrition advice (calorie data from the API is deliberately not returned). Every successful text result ends with "For adults of legal drinking age. Please drink responsibly." (tool errors do not).
 
 ## Routes
 
 | Route | Purpose |
 |---|---|
-| `POST /mcp` | MCP endpoint for Claude and any other client. |
+| `POST /mcp` | MCP endpoint for Claude and any other client. A trailing slash is accepted on both MCP routes. |
 | `POST /chatgpt/mcp` | Same tools. The widget resource also declares `ui.domain` / `openai/widgetDomain` = `https://mcp.fixmeadrinkapp.com`, which OpenAI requires for apps with UI. Claude validates `ui.domain` against its own hash format and refuses anything else, so the default route leaves it out. |
 | `GET /` | Landing page and public documentation (setup, tools, troubleshooting). |
 | `GET /privacy` | Privacy notice for both listings. |
@@ -38,95 +38,76 @@ ChatGPT / Claude
    │  Streamable HTTP, stateless (fresh McpServer per request)
    ▼
 Cloudflare Worker (src/index.ts)
-   ├─ rate limits: IP_LIMITER 300/min per IP, CALLER_LIMITER 30/min per ChatGPT user (openai/subject)
-   ├─ tools (src/server.ts → src/service.ts)
-   └─ Upstream (src/upstream.ts)
-        ├─ in-isolate memory (≤10 min)
-        ├─ Workers Cache API (per data center; TTLs below)
-        └─ UPSTREAM_LIMITER 60/min per location → https://fix-me-a-drink-api.fly.dev/api/v1
+   ├─ ingress, cheapest first: route, method (POST/OPTIONS), JSON content type,
+   │  declared size ≤ 64 KB, IP_LIMITER, then one capped read and one parse;
+   │  JSON-RPC batch arrays get a -32600 error; every MCP response carries the same CORS headers
+   ├─ CALLER_LIMITER on openai/subject, only in addition to the IP limit
+   ├─ tools (src/server.ts → src/service.ts, output schemas in src/schemas.ts)
+   └─ Upstream, one per call (src/upstream.ts)
+        ├─ in-isolate memory (≤10 min) and the Workers Cache API, keyed by API base URL and cache schema version
+        ├─ identical lookups within a call share one request
+        └─ ≤40 API requests per call, retries included; 8 s per attempt (body included);
+           20 s per call; one retry, honouring Retry-After up to 2 s → UPSTREAM_LIMITER → API
 ```
 
-- **SDK:** Cloudflare's stateless `createMcpHandler` from `agents/mcp/server` (Agents SDK 0.30) on top of the official TypeScript SDK v2 (`@modelcontextprotocol/server` 2.3), which Cloudflare's docs recommend for new servers. It serves both 2025-era clients (what ChatGPT and Claude use today) and 2026-07-28 clients. MCP Apps helpers come from `@modelcontextprotocol/ext-apps` 2.0.
-- **Ingredient matching:** the API's `/cocktails/matches` compares exact, case-sensitive catalogue names, so `src/ingredients.ts` first maps common words to catalogue names (a curated table built from the 250 most popular free recipes, every target verified against the live API), then falls back to `/ingredients/search` re-ranked with the website's rules. Water and saline count as staples.
-- **Ranking (`src/ranking.ts`):** free recipes only (premium ones hide their ingredients), filtered by strength and flavour, then the top 12 are compared with the bar from their full recipes: fewest missing first, then more of the bar used, then the API's grouping and popularity. Garnishes and optional ingredients never block a match.
-- **Recipe lookup:** the full catalogue list (one call of 2,000 per page, cached 12 h) is ranked locally, because the API's search ranks poorly for classics ("negroni" returns variants first). Qualified classics count as exact ("Manhattan (Sweet)", "The Original Margarita").
+- **SDK:** the official TypeScript SDK v2 (`@modelcontextprotocol/server` 2.3) and its own `createMcpHandler`, which serves 2025-era clients (what ChatGPT and Claude use today) through its stateless fallback and 2026-07-28 clients natively. The Worker passes it the body it already parsed. MCP Apps helpers come from `@modelcontextprotocol/ext-apps` 2.0.
+- **Ingredient matching:** the API's `/cocktails/matches` compares exact, case-sensitive catalogue names, so `src/ingredients.ts` first maps common words to catalogue names (a curated table built from the 250 most popular free recipes, every target verified against the live API), then falls back to `/ingredients/search` re-ranked with the website's rules, for at most 8 unfamiliar words per call (the rest are listed as `not_checked`). A word that names one bottle but several catalogue entries ("vermouth", "rum", "whiskey") is marked `one_of` and covers at most one ingredient of a recipe; produce and pantry words ("limes", "sugar") cover all their forms. Water and saline count as staples.
+- **Ranking (`src/ranking.ts`):** free recipes only (premium ones hide their ingredients), filtered by strength and flavour, ordered by the API's own missing count and then recipe size, then compared with the bar from their full recipes in batches of 8: fewest missing first, then more of the bar used, then API order. Comparison stops when no unchecked group can miss fewer ingredients than the drinks already chosen (the API counts a missing garnish and this server does not, so a group can improve by one), or after 16 recipes. Garnishes and optional ingredients never block a match. Low-proof options never repeat a drink from the main list; if they cannot be loaded, the main answer is kept and `unavailable` says so.
+- **Recipe lookup:** the full catalogue list (three pages of 2,000, cached 12 h) is ranked locally, because the API's search ranks poorly for classics ("negroni" returns variants first). Slugs and recipe URLs match in any case. Qualified classics ("Manhattan (Sweet)") are returned with a note that the match is not exact; `suggest_similar_cocktail` adds the same note, caps suggestions at 5 and only offers low-proof drinks that share a flavour or the base spirit.
 
-Cache TTLs: catalogue 12 h, recipe details, similar lists, glossary and ingredient pages 24 h, ingredient search 7 days, matches 1 h, "not found" answers 10 min. The Cache API only works on a custom domain (not on `workers.dev`), which is another reason to deploy on `mcp.fixmeadrinkapp.com`.
+Cache TTLs: catalogue 12 h, recipe details, similar lists, glossary and ingredient pages 24 h, ingredient search 7 days, matches 1 h, "not found" answers 10 min. `workers_dev` is off: the Cache API only works on the custom domain.
 
-Upstream budget: one cold `find` call costs about 15 to 20 API requests (matches plus up to 16 recipe details); a warm one costs none. The 60-per-minute budget per Cloudflare location is 900 per 15 minutes, under the API's 1,000. If it runs out, tools answer "Garçon is handling a lot of requests right now. Try again in a minute." See SUBMISSION.md for the option to exempt the Worker from the API limit.
+### Upstream budget, honestly
+
+- Rate-limit counters are kept **per Cloudflare location**, not globally. `UPSTREAM_LIMITER` (60 a minute) protects the API from one location only, and Workers egress IPs are shared, so it does not keep the Worker under the API's 1,000 requests per 15 minutes per IP.
+- A cold `find` call can cost up to 40 API requests, the per-call cap (matches, up to 26 recipe details, up to 8 ingredient searches, and three catalogue pages for the low-proof fallback); a warm one costs none. In the local smoke run, five cold calls spent a minute's budget and the next calls answered "busy" until the cache was warm.
+- `openai/subject` is supplied by the caller, so the per-user limit only ever adds to the IP limit. Claude sends no user id, so all Claude users share Anthropic's egress IPs.
+- **The Workers Paid plan is required.** Workers Free allows 50 subrequests (Cache API calls count) and 10 ms of CPU per request; a cold call needs more, and parsing the 2.2 MB catalogue alone exceeds 10 ms.
+- **The backend owner needs to exempt the Worker** from the per-IP limit with a key or allowlist (see SUBMISSION.md, blocker 5). Without it, busy periods will produce "Garçon is handling a lot of requests right now. Try again in a minute."
 
 ## Develop
 
 ```bash
 pnpm install
-pnpm test          # vitest: ranking, mapping, and the MCP server in-process with fixtures
-pnpm typecheck
+pnpm test          # vitest: the exported Worker with fake bindings and a fake recipe API
+pnpm typecheck     # sources and tests
 pnpm dev           # wrangler dev on http://127.0.0.1:8787
-pnpm smoke         # scripted MCP client (SDK v2) against wrangler dev and the live API
-node _agent/scripts/smoke.mjs --legacy   # same with the v1 SDK client (2025-era protocol)
+pnpm smoke         # both routes, a 2025-era client (SDK 1.x) and a 2026-07-28 client (SDK 2.x), live API
 ```
 
-The widget can be checked in a browser with `_agent/scripts/widget-harness.html` (serve `_agent/scripts` on any local port while `pnpm dev` runs; add `?theme=dark` or `?bar=gin,lime`). It plays an MCP Apps host: answers `ui/initialize`, sends a live tool result, resizes on `size-changed` and logs `ui/open-link`.
+The tests import the Worker's default export and drive it with fake rate limiters, a fake Cache API and a fetch stub for the recipe API, so they run the production path: routing, ingress checks, CORS, limiters, both MCP routes and both protocol eras (real SDK clients), every tool, and upstream 429, 5xx, timeout, HTML, deadline and budget failures.
+
+`pnpm smoke` (or `node _agent/scripts/smoke.mjs <baseUrl>`) states the expected outcome of every case, checks the result fields and the age line, and exits 1 on any mismatch. It writes a transcript to `_agent/runs/`, which git ignores. On a cold cache the first run can hit the 60-a-minute upstream budget (see above); run it again after a minute.
+
+The widget can be checked in a browser with `_agent/scripts/widget-harness.html` (serve `_agent/scripts` on any local port while `pnpm dev` runs; add `?theme=dark`, `?bar=gin,lime`, `?case=error` for a tool error, `?case=cancel` for a cancelled call, `?server=` for another port). It plays an MCP Apps host: answers `ui/initialize`, sends `tool-input`, then the tool result or `tool-cancelled`, resizes on `size-changed` and logs `ui/open-link`.
 
 ## Test and run evidence (22 Oct 2026)
 
-- `pnpm test`: 3 files, **39 tests passed**.
-- `pnpm typecheck`: clean. `wrangler deploy --dry-run`: bundle 755 KiB, 158 KiB gzipped.
-- `wrangler dev` + scripted clients against the live API: every tool called with valid and invalid input, on both protocol eras, **0 failures**. Full transcripts: [`_agent/runs/smoke-v1-2026-10-22T16-36-19.md`](_agent/runs/smoke-v1-2026-10-22T16-36-19.md) (SDK 1.32, 2025-era) and [`_agent/runs/smoke-v2-2026-10-22T16-36-19.md`](_agent/runs/smoke-v2-2026-10-22T16-36-19.md) (SDK 2.3).
-- Cold cache: the first `find` took 1.4 s and the first recipe lookup about 0.5 s (catalogue download); warm calls took 5 to 30 ms.
-- Rate limit: 33 calls in a minute with one `openai/subject` gave 30 × 200, then 429 with `Retry-After: 60` and a JSON-RPC error body.
-- Widget: rendered in the harness in light and dark themes with images; a card click sent `ui/open-link` for the recipe URL.
+- `pnpm test`: 5 files, **73 tests passed**. `pnpm typecheck`: clean, tests included.
+- `wrangler deploy --dry-run`: 745 KiB, 157 KiB gzipped.
+- `wrangler dev` + `pnpm smoke` against the live API: 18 tool cases and 2 ingress checks on each route, each with a 2025-era and a 2026-07-28 client: **all cases matched** (second run; the first, cold run hit the upstream budget after five `find` calls).
+- Widget harness: rendered in light and dark, showed the tool error text for an error result, and cleared to "Search cancelled." on `tool-cancelled`.
 
-Condensed transcript (SDK 1.32 client, `wrangler dev`, live API):
+Excerpt (2025-era client, `wrangler dev`, live API):
 
 ```text
-tools/list → 4 tools, all readOnlyHint true / destructiveHint false / openWorldHint false;
-             find_cocktails_by_ingredients has _meta.ui.resourceUri ui://ask-garcon/cocktail-list-v1.html
-resources/read ui://ask-garcon/cocktail-list-v1.html → text/html;profile=mcp-app, 8,333 chars,
-             csp.resourceDomains [https://images.fixmeadrinkapp.com]
-
 find_cocktails_by_ingredients {"ingredients":["gin","limes","simple syrup","soda water"]}
-  Your bar: gin -> London dry gin / Dry gin; limes -> Lime Juice / Lime; simple syrup -> Rich Simple (2:1) syrup / Plain Simple; soda water -> Soda Water.
-  - Churchill Martini (Strong): can make now. https://fixmeadrinkapp.com/recipes/churchill-martini
-  - Gin-Ger Tom (Strong): missing Ginger root.
-  - Southside (Medium): missing Mint leaves.
-  - Grapefruit Rickey (Medium): missing Grapefruit Juice.
+  Your bar: gin -> London dry gin or Dry gin; limes -> Lime Juice / Lime; simple syrup -> Rich Simple (2:1) syrup or Plain Simple; soda water -> Soda Water.
+  - Churchill Martini (Strong): can make now.   - Gin-Ger Tom (Strong): missing Ginger root.
+  - Southside (Medium): missing Mint leaves.    - Grapefruit Rickey (Medium): missing Grapefruit Juice.
   - Pisco Collins (Medium): missing Pisco.
-  Low or zero-proof options:
-  - Garibaldi (Low): missing Red Bitter Liqueur, Orange Juice.
-
-find_cocktails_by_ingredients {"ingredients":["aperol","prosecco","soda water","orange juice"],"strength":"zero_or_low"}
-  - Buck's Fizz (Low): can make now.  - Spritzer (Low): missing White wine.  - Pink Aperitivo (Low): missing Grapefruit Soda. …
-
-find_cocktails_by_ingredients {"ingredients":["xyzzy"]}
-  Not recognised: xyzzy. None of those matched an ingredient in the Garçon catalogue. …
-
-get_cocktail_recipe {"name":"Espresso Martini"}
-  Espresso Martini: https://fixmeadrinkapp.com/recipes/espresso-martini
-  Strength: Strong · about 17% ABV · Glass: Martini · 5 min
-  - 1½ oz (44 ml) Vodka  - 1 oz (30 ml) Espresso  - ⅔ oz (20 ml) Coffee liqueur  - 2 drops Saline solution 4:1 (optional)
-  Garnish: 3 Coffee Beans; 5 steps
+  Low or zero-proof options: Garibaldi (Low): missing Red Bitter Liqueur, Orange Juice.
+  For adults of legal drinking age. Please drink responsibly.
 
 get_cocktail_recipe {"name":"Margarita"}
   No recipe is named exactly "Margarita". This is the closest match in the Garçon catalogue.
   The Original Margarita … This is a premium recipe, so its ingredient list and steps are not public.
   Free recipes like it: Pink Margarita, Improved Trashy Margarita
 
-get_cocktail_recipe {"name":"not a real drink qq"}  → isError: No cocktail called "not a real drink qq" in the Garçon catalogue. …
-
-explain_bar_term {"term":"mezcal"}
-  Mezcal (spirit): https://fixmeadrinkapp.com/ingredients/mezcal
-  Typical ABV: 38 to 55%. Substitutes: Tequila, Reposado tequila, Lyre's Agave Blanco (zero-proof)
-
-explain_bar_term {"term":"what is a dry shake?"}
-  Dry shake (technique): https://fixmeadrinkapp.com/glossary/dry-shake  + 5 how-to steps
-
-suggest_similar_cocktail {"name":"Moscow Mule"}
-  - Raspberry Mule (Medium) … - Reality Check [premium recipe] …
-  Low or zero-proof options: Cucumber & Mint Seltz, Spritzer
-
 suggest_similar_cocktail {"name":"Espresso Martini","low_proof":true}
-  - Coffee Collins (Low, Coffee, Citrusy) - Cucumber & Mint Seltz - Spritzer - Garibaldi
+  Low or zero-proof drinks like Espresso Martini: Coffee Collins, Cucumber & Mint Seltz, Spritzer, Garibaldi, Thuir Sour
+
+get_cocktail_recipe {"name":"not a real drink qq"}  → isError: No cocktail called "not a real drink qq" in the Garçon catalogue. …
 ```
 
 ## Known limits of the data
@@ -134,11 +115,11 @@ suggest_similar_cocktail {"name":"Espresso Martini","low_proof":true}
 - The catalogue has no plain "Negroni", "Mojito" or "Margarita"; it has variants ("Negroni Sbagliato", "The Original Margarita", premium). The recipe tool returns the closest match and says so.
 - Only free recipes (about a third of the catalogue) can be ranked by what is missing, because premium recipes hide their ingredients.
 - Few free recipes are Low or Non Alcoholic (37 at build time), so low-proof options often need a bottle the user lacks. The answer lists what is missing.
-- The matches endpoint returns at most 50 "almost there" recipes, so very large bars can miss some.
+- The matches endpoint returns at most 50 "close" and 50 "almost there" recipes, and at most 16 are compared per call, so very large bars can miss some.
 
 ## Folder layout
 
 - `README.md`, `SUBMISSION.md`: read these.
 - `src/`: Worker and MCP server. `test/`: vitest suites and API fixtures.
 - `plugin/`: the OpenAI plugin package to zip and upload (`plugin.json`, `mcp.json`, `assets/`).
-- `_agent/`: scripts, run transcripts and build output for agents.
+- `_agent/`: smoke script and widget harness (`scripts/`); run transcripts and build output stay local and are not committed.

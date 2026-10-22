@@ -28,7 +28,7 @@ export interface RawRecipeIngredient {
   }
 }
 
-export interface RawLinkedItem {
+interface RawLinkedItem {
   readonly key?: string
   readonly label: string
   readonly termSlug?: string | null

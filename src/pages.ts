@@ -4,6 +4,7 @@
 import {
   AGE_NOTE,
   MCP_ORIGIN,
+  PRIVACY_URL,
   SITE_PRIVACY_URL,
   SITE_URL,
   SUPPORT_EMAIL,
@@ -64,7 +65,7 @@ export const LANDING_HTML = page(
 <li><strong>Still stuck</strong>: email <a href="mailto:${SUPPORT_EMAIL}">${SUPPORT_EMAIL}</a>.</li>
 </ul>
 
-<p><a href="${MCP_ORIGIN}/privacy">Privacy notice</a> · <a href="${TERMS_URL}">Terms</a> · <a href="${SUPPORT_URL}">Support</a></p>`
+<p><a href="${PRIVACY_URL}">Privacy notice</a> · <a href="${TERMS_URL}">Terms</a> · <a href="${SUPPORT_URL}">Support</a></p>`
 )
 
 export const PRIVACY_HTML = page(

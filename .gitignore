@@ -2,7 +2,6 @@ node_modules/
 .wrangler/
 .dev.vars
 _agent/build/
-_agent/runs/wrangler-dev.log
-_agent/runs/last.err
+_agent/runs/
 *.zip
 .DS_Store

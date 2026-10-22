@@ -7,14 +7,14 @@ export function normalize(value: string) {
     .trim()
     .toLowerCase()
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/&/g, ' and ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
     .replace(/\s+/g, ' ')
 }
 
-export function tokens(value: string) {
+function tokens(value: string) {
   return normalize(value)
     .split(' ')
     .filter((token) => token.length > 0)
@@ -28,7 +28,7 @@ export function slugify(value: string) {
 export const NO_MATCH = 9
 
 /** A name without qualifiers: "The Original Margarita" -> "margarita". */
-export function coreName(name: string) {
+function coreName(name: string) {
   return normalize(name.replace(/\([^)]*\)/g, ' '))
     .replace(/^(the original|the classic|classic|original|the) /, '')
     .replace(/ cocktail$/, '')

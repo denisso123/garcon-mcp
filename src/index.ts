@@ -1,11 +1,8 @@
-// Cloudflare Worker entry. Routes:
-//   POST /mcp          MCP endpoint (Streamable HTTP, stateless). Claude and other hosts.
-//   POST /chatgpt/mcp  Same tools; the widget declares ChatGPT's ui.domain.
-//   GET  /             Landing page.
-//   GET  /privacy      Privacy notice for both directory listings.
-//   GET  /.well-known/openai-apps-challenge   OpenAI domain verification token.
+// Cloudflare Worker entry: the two MCP routes and the small public pages.
+// MCP requests pass the cheap checks (route, method, content type, declared
+// size, IP limit) before the body is read, and the body is read once.
 
-import { createMcpHandler } from 'agents/mcp/server'
+import { createMcpHandler, isJsonContentType, readRequestBody } from '@modelcontextprotocol/server'
 import { LANDING_HTML, PRIVACY_HTML } from './pages'
 import { type HostProfile, createServer } from './server'
 import { Upstream } from './upstream'
@@ -13,9 +10,9 @@ import { Upstream } from './upstream'
 export interface Env {
   /** Per client IP. Generous: ChatGPT and Claude call from shared egress IPs. */
   readonly IP_LIMITER: RateLimit
-  /** Per ChatGPT user (anonymized `openai/subject`), when the host sends one. */
+  /** Per ChatGPT user (`openai/subject`), on top of the IP limit, when the host sends one. */
   readonly CALLER_LIMITER: RateLimit
-  /** Cache misses that reach the recipe API, per Cloudflare location. */
+  /** Requests that reach the recipe API, per Cloudflare location. */
   readonly UPSTREAM_LIMITER: RateLimit
   /** Token shown by the OpenAI plugin portal for domain verification. */
   readonly OPENAI_APPS_CHALLENGE?: string
@@ -23,14 +20,25 @@ export interface Env {
   readonly API_BASE_URL?: string
 }
 
-const ROUTES: Record<string, HostProfile> = {
-  '/mcp': 'default',
-  '/chatgpt/mcp': 'chatgpt',
+const ROUTES = new Map<string, HostProfile>([
+  ['/mcp', 'default'],
+  ['/chatgpt/mcp', 'chatgpt'],
+])
+
+const MAX_BODY_BYTES = 64 * 1024
+
+// The server is public, read-only and uses no cookies, so any origin may call it.
+const CORS_HEADERS: Record<string, string> = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-headers':
+    'content-type, accept, authorization, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name, last-event-id',
+  'access-control-expose-headers': 'retry-after, mcp-protocol-version',
+  'access-control-max-age': '86400',
 }
 
-function html(body: string, status = 200) {
+function html(body: string) {
   return new Response(body, {
-    status,
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'public, max-age=3600',
@@ -39,49 +47,30 @@ function html(body: string, status = 200) {
   })
 }
 
-function rateLimited(id: unknown) {
-  return new Response(
-    JSON.stringify({
-      jsonrpc: '2.0',
-      id: id ?? null,
-      error: {
-        code: -32000,
-        message: 'Too many requests to Ask Garçon. Wait a minute and try again.',
-      },
-    }),
-    {
-      status: 429,
-      headers: { 'content-type': 'application/json', 'retry-after': '60' },
-    }
-  )
+type JsonRpcId = string | number | null
+
+function requestId(body: unknown): JsonRpcId {
+  const id = (body as { id?: unknown } | null)?.id
+  return typeof id === 'string' || typeof id === 'number' ? id : null
 }
 
-interface JsonRpcPeek {
-  readonly id?: unknown
-  readonly subject?: string
+function jsonRpcError(
+  status: number,
+  id: JsonRpcId,
+  code: number,
+  message: string,
+  headers: Record<string, string> = {}
+) {
+  return Response.json({ jsonrpc: '2.0', id, error: { code, message } }, { status, headers })
 }
 
-// Reads the JSON-RPC id and ChatGPT's anonymized user id without consuming
-// the request body the MCP handler needs.
-async function peek(request: Request): Promise<JsonRpcPeek> {
-  if (request.method !== 'POST') return {}
-  try {
-    const body = (await request.clone().json()) as {
-      id?: unknown
-      params?: { _meta?: Record<string, unknown> }
-    }
-    const subject = body?.params?._meta?.['openai/subject']
-    return {
-      id: body?.id,
-      subject: typeof subject === 'string' && subject.length <= 200 ? subject : undefined,
-    }
-  } catch {
-    return {}
-  }
+function tooManyRequests(id: JsonRpcId) {
+  return jsonRpcError(429, id, -32000, 'Too many requests to Ask Garçon. Wait a minute and try again.', {
+    'retry-after': '60',
+  })
 }
 
-async function allowed(limiter: RateLimit | undefined, key: string) {
-  if (!limiter) return true
+async function allowed(limiter: RateLimit, key: string) {
   try {
     return (await limiter.limit({ key })).success
   } catch {
@@ -90,45 +79,79 @@ async function allowed(limiter: RateLimit | undefined, key: string) {
   }
 }
 
+function subjectOf(body: unknown) {
+  const subject = (body as { params?: { _meta?: Record<string, unknown> } } | null)?.params?._meta?.[
+    'openai/subject'
+  ]
+  return typeof subject === 'string' && subject.length > 0 && subject.length <= 200 ? subject : null
+}
+
+async function serveMcp(request: Request, env: Env, ctx: ExecutionContext, profile: HostProfile) {
+  if (request.method === 'OPTIONS') return new Response(null, { status: 204 })
+  if (request.method !== 'POST') {
+    return jsonRpcError(405, null, -32000, 'Method not allowed.', { allow: 'POST, OPTIONS' })
+  }
+  if (!isJsonContentType(request.headers.get('content-type'))) {
+    return jsonRpcError(415, null, -32000, 'Content-Type must be application/json.')
+  }
+  const tooLarge = () => jsonRpcError(413, null, -32000, 'Request body is too large.')
+  if (Number(request.headers.get('content-length')) > MAX_BODY_BYTES) return tooLarge()
+
+  const ip = request.headers.get('cf-connecting-ip') ?? 'unknown'
+  if (!(await allowed(env.IP_LIMITER, `ip:${ip}`))) return tooManyRequests(null)
+
+  const read = await readRequestBody(request, MAX_BODY_BYTES)
+  if (read.tooLarge) return tooLarge()
+  let body: unknown
+  try {
+    body = JSON.parse(read.text)
+  } catch {
+    return jsonRpcError(400, null, -32700, 'Parse error: the body is not valid JSON.')
+  }
+  if (Array.isArray(body)) {
+    return jsonRpcError(400, null, -32600, 'Batch requests are not supported. Send one JSON-RPC message per request.')
+  }
+
+  // ChatGPT's anonymized user id is caller-supplied, so it only ever adds a limit.
+  const subject = subjectOf(body)
+  if (subject && !(await allowed(env.CALLER_LIMITER, `sub:${subject}`))) {
+    return tooManyRequests(requestId(body))
+  }
+
+  const up = new Upstream({
+    cache: typeof caches === 'undefined' ? null : caches.default,
+    permit: () => allowed(env.UPSTREAM_LIMITER, 'upstream'),
+    waitUntil: (promise) => ctx.waitUntil(promise),
+    baseUrl: env.API_BASE_URL || undefined,
+  })
+  const handler = createMcpHandler(() => createServer(up, profile), {
+    maxRequestBodySize: MAX_BODY_BYTES,
+    onerror: (error) => console.error('mcp handler', error.message),
+  })
+  return handler.fetch(request, { parsedBody: body })
+}
+
+function withCors(response: Response) {
+  const result = new Response(response.body, response)
+  for (const [name, value] of Object.entries(CORS_HEADERS)) result.headers.set(name, value)
+  return result
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url)
-    const path = url.pathname.replace(/\/+$/, '') || '/'
+    const path = new URL(request.url).pathname.replace(/\/+$/, '') || '/'
+    const profile = ROUTES.get(path)
+    if (profile) return withCors(await serveMcp(request, env, ctx, profile))
 
     if (request.method === 'GET' || request.method === 'HEAD') {
       if (path === '/') return html(LANDING_HTML)
       if (path === '/privacy') return html(PRIVACY_HTML)
       if (path === '/.well-known/openai-apps-challenge') {
         return env.OPENAI_APPS_CHALLENGE
-          ? new Response(env.OPENAI_APPS_CHALLENGE, {
-              headers: { 'content-type': 'text/plain; charset=utf-8' },
-            })
+          ? new Response(env.OPENAI_APPS_CHALLENGE, { headers: { 'content-type': 'text/plain; charset=utf-8' } })
           : new Response('Not configured', { status: 404 })
       }
     }
-
-    const profile = ROUTES[path]
-    if (!profile) return new Response('Not found', { status: 404 })
-
-    if (request.method === 'POST') {
-      const { id, subject } = await peek(request)
-      const ip = request.headers.get('cf-connecting-ip') ?? 'unknown'
-      if (!(await allowed(env.IP_LIMITER, `ip:${ip}`))) return rateLimited(id)
-      if (subject && !(await allowed(env.CALLER_LIMITER, `sub:${subject}`))) {
-        return rateLimited(id)
-      }
-    }
-
-    const up = new Upstream({
-      cache: typeof caches !== 'undefined' ? caches.default : null,
-      budget: () => allowed(env.UPSTREAM_LIMITER, 'upstream'),
-      waitUntil: (promise) => ctx.waitUntil(promise),
-      baseUrl: env.API_BASE_URL || undefined,
-    })
-    const handler = createMcpHandler(() => createServer(up, profile), {
-      route: path,
-      corsOptions: { origin: '*', methods: 'GET, POST, DELETE, OPTIONS' },
-    })
-    return handler(request, env, ctx)
+    return new Response('Not found', { status: 404 })
   },
 } satisfies ExportedHandler<Env>

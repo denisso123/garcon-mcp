@@ -1,31 +1,11 @@
-// Client for the public Garçon REST API. Three cache layers keep traffic far
-// below the API's limit of 1,000 requests per 15 minutes per IP:
-//   1. a small in-isolate map (hot keys, no I/O),
-//   2. the Workers Cache API (per data center, survives isolate restarts),
-//   3. the API itself, behind an upstream budget (a rate-limit binding).
-// A 404 or 400 means "no such entity" and resolves to null; 429, 5xx and
-// network errors retry once, then throw an UpstreamError the tools turn into
-// a readable message.
+// Client for the public Garçon REST API. One instance serves one tool call:
+// it carries that call's request budget, deadline and in-flight lookups.
+// Answers are cached in this isolate's memory and in the Workers Cache API.
 
 import { API_BASE_URL } from './site'
 
-export type UpstreamErrorKind = 'busy' | 'unavailable'
-
 export class UpstreamError extends Error {
-  readonly kind: UpstreamErrorKind
-
-  constructor(kind: UpstreamErrorKind, message: string) {
-    super(message)
-    this.name = 'UpstreamError'
-    this.kind = kind
-  }
-}
-
-export interface ServiceResponse<T> {
-  readonly success: boolean
-  readonly message: string
-  readonly responseObject: T
-  readonly statusCode: number
+  override name = 'UpstreamError'
 }
 
 /** The subset of the Workers Cache API this client uses. */
@@ -34,23 +14,33 @@ export interface CacheLike {
   put(request: Request, response: Response): Promise<void>
 }
 
-/** Returns false when the upstream budget for this window is spent. */
-export type BudgetCheck = () => Promise<boolean>
-
-export interface UpstreamOptions {
-  readonly fetch?: typeof fetch
-  readonly cache?: CacheLike | null
-  readonly budget?: BudgetCheck
-  readonly waitUntil?: (promise: Promise<unknown>) => void
+interface UpstreamOptions {
+  readonly cache: CacheLike | null
+  /** The shared limiter for requests that reach the API. Resolves false when spent. */
+  readonly permit: () => Promise<boolean>
+  readonly waitUntil: (promise: Promise<unknown>) => void
   readonly baseUrl?: string
 }
 
+// Bump when the shape of cached values changes.
+const CACHE_SCHEMA = 2
 // Cache keys live on a host we own so they never collide with real URLs.
 const CACHE_KEY_ORIGIN = 'https://cache.mcp.fixmeadrinkapp.com'
 const MEMORY_LIMIT = 200
-const RETRY_DELAY_MS = 400
-const TIMEOUT_MS = 10_000
+const MEMORY_TTL_SECONDS = 600
+const NOT_FOUND_TTL_SECONDS = 600
+
+const MAX_REQUESTS_PER_CALL = 40
+const MAX_ATTEMPTS = 2
+const ATTEMPT_TIMEOUT_MS = 8_000
+const CALL_DEADLINE_MS = 20_000
+const MAX_RETRY_WAIT_MS = 2_000
 const USER_AGENT = 'garcon-mcp/1.0 (+https://fixmeadrinkapp.com)'
+
+const BUSY = 'Garçon is handling a lot of requests right now. Try again in a minute.'
+const UNAVAILABLE = 'The Garçon recipe service is not answering right now. Try again shortly.'
+const TOO_SLOW = 'The Garçon recipe service is too slow right now. Try again shortly.'
+const OVER_BUDGET = 'That question needs more catalogue lookups than one answer allows. Try a shorter list.'
 
 interface MemoryEntry {
   readonly expires: number
@@ -63,155 +53,179 @@ const memory = new Map<string, MemoryEntry>()
 function memoryGet(key: string): unknown {
   const entry = memory.get(key)
   if (!entry) return undefined
-  if (entry.expires < Date.now()) {
-    memory.delete(key)
-    return undefined
-  }
-  // Refresh recency for the simple LRU below.
   memory.delete(key)
+  if (entry.expires < Date.now()) return undefined
   memory.set(key, entry)
   return entry.value
 }
 
-function memorySet(key: string, value: unknown, ttlSeconds: number) {
-  memory.set(key, { value, expires: Date.now() + ttlSeconds * 1000 })
-  while (memory.size > MEMORY_LIMIT) {
-    const oldest = memory.keys().next().value
-    if (oldest === undefined) break
+function memorySet(key: string, value: unknown) {
+  memory.set(key, { value, expires: Date.now() + MEMORY_TTL_SECONDS * 1000 })
+  for (const oldest of memory.keys()) {
+    if (memory.size <= MEMORY_LIMIT) break
     memory.delete(oldest)
   }
-}
-
-export function clearMemoryCache() {
-  memory.clear()
 }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** Milliseconds a 429 or 503 asks us to wait, or null when it does not say. */
+function retryAfterMs(response: Response): number | null {
+  const header = response.headers.get('retry-after')
+  if (!header) return null
+  const seconds = Number(header)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const date = Date.parse(header)
+  return Number.isNaN(date) ? null : Math.max(0, date - Date.now())
+}
+
+function backoffMs() {
+  return 250 + Math.random() * 250
+}
+
+/** The API wraps every answer as { success, responseObject }. */
+function unwrap<T>(text: string): T | null {
+  let body: { success?: unknown; responseObject?: T }
+  try {
+    body = JSON.parse(text)
+  } catch {
+    // An HTML error page from a proxy in front of the API, for example.
+    throw new UpstreamError(UNAVAILABLE)
+  }
+  return body?.success === true ? (body.responseObject ?? null) : null
+}
+
+type Attempt<T> =
+  | { readonly ok: true; readonly value: T | null }
+  | { readonly ok: false; readonly error: UpstreamError; readonly waitMs: number | null }
+
 export class Upstream {
-  private readonly fetchImpl: typeof fetch
   private readonly cache: CacheLike | null
-  private readonly budget: BudgetCheck
+  private readonly permit: () => Promise<boolean>
   private readonly waitUntil: (promise: Promise<unknown>) => void
   private readonly baseUrl: string
+  private readonly deadline = Date.now() + CALL_DEADLINE_MS
+  private readonly inflight = new Map<string, Promise<unknown>>()
+  private requests = 0
 
-  constructor(options: UpstreamOptions = {}) {
-    this.fetchImpl = options.fetch ?? ((input, init) => fetch(input, init))
-    this.cache = options.cache ?? null
-    this.budget = options.budget ?? (async () => true)
-    this.waitUntil = options.waitUntil ?? (() => {})
+  constructor(options: UpstreamOptions) {
+    this.cache = options.cache
+    this.permit = options.permit
+    this.waitUntil = options.waitUntil
     this.baseUrl = options.baseUrl ?? API_BASE_URL
   }
 
   /** GET an API path. Null when the API answers 404 or 400. */
   get<T>(path: string, ttlSeconds: number): Promise<T | null> {
-    return this.cached<T>(`GET ${path}`, ttlSeconds, () =>
-      this.request<T>(path, { method: 'GET' })
-    )
+    return this.load<T>(`GET ${path}`, ttlSeconds, () => this.request<T>(path))
   }
 
-  /** POST a JSON body, cached by path and body (only for read-only endpoints). */
+  /** POST a JSON body to a read-only endpoint, cached by path and body. */
   post<T>(path: string, body: unknown, ttlSeconds: number): Promise<T | null> {
     const payload = JSON.stringify(body)
-    return this.cached<T>(`POST ${path} ${payload}`, ttlSeconds, () =>
-      this.request<T>(path, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: payload,
-      })
-    )
+    return this.load<T>(`POST ${path} ${payload}`, ttlSeconds, () => this.request<T>(path, payload))
+  }
+
+  /** Identical lookups within one call share a single promise. */
+  private load<T>(what: string, ttlSeconds: number, fetchValue: () => Promise<T | null>) {
+    const key = `${CACHE_SCHEMA} ${this.baseUrl} ${what}`
+    let pending = this.inflight.get(key)
+    if (!pending) {
+      pending = this.cached(key, ttlSeconds, fetchValue)
+      this.inflight.set(key, pending)
+    }
+    return pending as Promise<T | null>
   }
 
   private async cached<T>(
     key: string,
     ttlSeconds: number,
-    load: () => Promise<T | null>
+    fetchValue: () => Promise<T | null>
   ): Promise<T | null> {
     const hot = memoryGet(key)
     if (hot !== undefined) return hot as T | null
 
-    const cacheRequest = new Request(
-      `${CACHE_KEY_ORIGIN}/v1?k=${encodeURIComponent(key)}`
-    )
-    if (this.cache) {
+    const cacheRequest = new Request(`${CACHE_KEY_ORIGIN}/?k=${encodeURIComponent(key)}`)
+    const stored = await this.cache?.match(cacheRequest).catch(() => undefined)
+    if (stored) {
       try {
-        const hit = await this.cache.match(cacheRequest)
-        if (hit) {
-          const value = (await hit.json()) as { v: T | null }
-          memorySet(key, value.v, Math.min(ttlSeconds, 600))
-          return value.v
-        }
+        const { v } = (await stored.json()) as { v: T | null }
+        memorySet(key, v)
+        return v
       } catch {
-        // A cache failure only costs an upstream call.
+        // An unreadable entry only costs an API request.
       }
     }
 
-    const value = await load()
-    memorySet(key, value, Math.min(ttlSeconds, 600))
+    const value = await fetchValue()
+    memorySet(key, value)
     if (this.cache) {
-      // Cache misses ("not found") briefly too, so a typo is not refetched.
-      const ttl = value === null ? Math.min(ttlSeconds, 600) : ttlSeconds
+      const ttl = value === null ? Math.min(ttlSeconds, NOT_FOUND_TTL_SECONDS) : ttlSeconds
       const response = new Response(JSON.stringify({ v: value }), {
-        headers: {
-          'content-type': 'application/json',
-          'cache-control': `public, max-age=${ttl}`,
-        },
+        headers: { 'content-type': 'application/json', 'cache-control': `public, max-age=${ttl}` },
       })
-      this.waitUntil(
-        this.cache.put(cacheRequest, response).catch(() => undefined)
-      )
+      this.waitUntil(this.cache.put(cacheRequest, response).catch(() => undefined))
     }
     return value
   }
 
-  private async request<T>(path: string, init: RequestInit): Promise<T | null> {
-    for (let attempt = 0; ; attempt++) {
-      if (!(await this.budget())) {
-        throw new UpstreamError(
-          'busy',
-          'Garçon is handling a lot of requests right now. Try again in a minute.'
-        )
-      }
+  private async request<T>(path: string, jsonBody?: string): Promise<T | null> {
+    for (let attempt = 1; ; attempt++) {
+      // Counted before the first await, so parallel lookups cannot overshoot.
+      if (this.requests++ >= MAX_REQUESTS_PER_CALL) throw new UpstreamError(OVER_BUDGET)
+      if (!(await this.permit())) throw new UpstreamError(BUSY)
 
-      let response: Response
-      try {
-        response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-          ...init,
-          headers: {
-            accept: 'application/json',
-            'user-agent': USER_AGENT,
-            ...(init.headers as Record<string, string> | undefined),
-          },
-          signal: AbortSignal.timeout(TIMEOUT_MS),
-        })
-      } catch {
-        if (attempt === 0) {
-          await sleep(RETRY_DELAY_MS)
-          continue
-        }
-        throw new UpstreamError(
-          'unavailable',
-          'The Garçon recipe service did not respond. Try again shortly.'
-        )
-      }
-
-      if (response.status === 404 || response.status === 400) return null
-      if (response.ok) {
-        const body = (await response.json()) as ServiceResponse<T>
-        return body?.success ? body.responseObject : null
-      }
-      if (attempt === 0 && (response.status === 429 || response.status >= 500)) {
-        await sleep(RETRY_DELAY_MS)
-        continue
-      }
-      throw new UpstreamError(
-        response.status === 429 ? 'busy' : 'unavailable',
-        response.status === 429
-          ? 'Garçon is handling a lot of requests right now. Try again in a minute.'
-          : `The Garçon recipe service answered ${response.status}. Try again shortly.`
-      )
+      const result = await this.attempt<T>(path, jsonBody)
+      if (result.ok) return result.value
+      const remaining = this.deadline - Date.now()
+      const wait = result.waitMs
+      if (attempt >= MAX_ATTEMPTS || wait === null || wait > MAX_RETRY_WAIT_MS) throw result.error
+      if (wait >= remaining) throw new UpstreamError(TOO_SLOW)
+      await sleep(wait)
     }
+  }
+
+  /** One request, body included, inside the attempt timeout and the call deadline. */
+  private async attempt<T>(path: string, jsonBody?: string): Promise<Attempt<T>> {
+    const remaining = this.deadline - Date.now()
+    if (remaining <= 0) throw new UpstreamError(TOO_SLOW)
+    let response: Response
+    try {
+      response = await fetch(`${this.baseUrl}${path}`, {
+        method: jsonBody === undefined ? 'GET' : 'POST',
+        headers: {
+          accept: 'application/json',
+          'user-agent': USER_AGENT,
+          ...(jsonBody === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body: jsonBody,
+        signal: AbortSignal.timeout(Math.min(ATTEMPT_TIMEOUT_MS, remaining)),
+      })
+      if (response.ok) return { ok: true, value: unwrap<T>(await response.text()) }
+    } catch (error) {
+      if (error instanceof UpstreamError) throw error
+      const timedOut = error instanceof Error && error.name === 'TimeoutError'
+      return {
+        ok: false,
+        error: new UpstreamError(timedOut ? TOO_SLOW : UNAVAILABLE),
+        waitMs: backoffMs(),
+      }
+    }
+
+    await response.body?.cancel()
+    if (response.status === 404 || response.status === 400) return { ok: true, value: null }
+    if (response.status === 429) {
+      return { ok: false, error: new UpstreamError(BUSY), waitMs: retryAfterMs(response) ?? backoffMs() }
+    }
+    if (response.status >= 500) {
+      return {
+        ok: false,
+        error: new UpstreamError(UNAVAILABLE),
+        waitMs: retryAfterMs(response) ?? backoffMs(),
+      }
+    }
+    return { ok: false, error: new UpstreamError(UNAVAILABLE), waitMs: null }
   }
 }

@@ -8,10 +8,11 @@ import type {
   RawIngredientPage,
   RawIngredientPagePreview,
 } from './api-types'
+import type { ExplainOutput, Link } from './schemas'
 import { glossaryUrl, ingredientUrl } from './site'
 import { NO_MATCH, nameRank, normalize } from './text'
 
-export type TermHit =
+type TermHit =
   | { readonly kind: 'ingredient'; readonly rank: number; readonly page: RawIngredientPagePreview }
   | { readonly kind: 'glossary'; readonly rank: number; readonly term: RawGlossaryPreview }
 
@@ -56,20 +57,8 @@ export function hitUrl(hit: TermHit) {
   return hit.kind === 'ingredient' ? ingredientUrl(hit.page.slug) : glossaryUrl(hit.term.slug)
 }
 
-export interface TermOutput {
-  name: string
-  kind: string
-  url: string
-  definition: string
-  details: { label: string; value: string }[]
-  how_to?: { question: string; steps: string[] }
-  substitutes?: { name: string; note?: string; zero_proof: boolean; url?: string }[]
-  related: { name: string; url: string }[]
-  example_cocktails?: { name: string; url: string }[]
-}
-
 // Inline glossary markup: [[term:slug|Text]], [[ingredient:slug]] -> text.
-export function plainText(value: string | undefined) {
+function plainText(value: string | undefined) {
   return (value ?? '')
     .replace(/\[\[[a-z]+:([^\]|]+)\|([^\]]+)\]\]/g, '$2')
     .replace(/\[\[[a-z]+:([^\]|]+)\]\]/g, (_, slug: string) => slug.replace(/-/g, ' '))
@@ -99,8 +88,8 @@ const ARCHETYPE_LABEL: Record<string, string> = {
 export function ingredientTerm(
   page: RawIngredientPage,
   pageNames: ReadonlyMap<string, string>,
-  exampleCocktails: { name: string; url: string }[]
-): TermOutput {
+  exampleCocktails: Link[]
+): ExplainOutput {
   const content = page.content ?? {}
   const details: { label: string; value: string }[] = []
   if (content.taste?.summary) details.push({ label: 'Taste', value: plainText(content.taste.summary) })
@@ -122,7 +111,7 @@ export function ingredientTerm(
     })
   }
 
-  const output: TermOutput = {
+  const output: ExplainOutput = {
     name: page.name,
     kind: ARCHETYPE_LABEL[page.archetype ?? ''] ?? 'ingredient',
     url: ingredientUrl(page.slug),
@@ -141,7 +130,7 @@ export function ingredientTerm(
     .map((sub) => {
       const name = sub.label ?? (sub.pageSlug ? pageNames.get(sub.pageSlug) : undefined) ?? sub.pageSlug?.replace(/-/g, ' ')
       if (!name) return null
-      const item: { name: string; note?: string; zero_proof: boolean; url?: string } = {
+      const item: NonNullable<ExplainOutput['substitutes']>[number] = {
         name,
         zero_proof: sub.zeroProof === true,
       }
@@ -155,10 +144,10 @@ export function ingredientTerm(
   return output
 }
 
-export function glossaryTerm(term: RawGlossaryTerm): TermOutput {
+export function glossaryTerm(term: RawGlossaryTerm): ExplainOutput {
   const content = term.content ?? {}
   const explanation = (content.explanation ?? []).map(plainText).filter(Boolean)
-  const output: TermOutput = {
+  const output: ExplainOutput = {
     name: term.name,
     kind: term.type,
     url: glossaryUrl(term.slug),

@@ -17,8 +17,7 @@ export const SERVER_NAME = 'ask-garcon'
 export const SERVER_TITLE = 'Ask Garçon'
 export const SERVER_VERSION = '1.0.0'
 
-export const AGE_NOTE =
-  'For adults of legal drinking age. Please drink responsibly.'
+export const AGE_NOTE = 'For adults of legal drinking age. Please drink responsibly.'
 
 export function recipeUrl(slug: string) {
   return `${SITE_URL}/recipes/${encodeURIComponent(slug)}`

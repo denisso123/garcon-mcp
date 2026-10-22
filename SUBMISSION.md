@@ -10,7 +10,8 @@ Steps for Denis, in order: deploy, test in both hosts, submit to ChatGPT, submit
 | 2 | **OpenAI business verification** for BLANKPAGE ENTERPRISE S.R.L. "Publishing under an unverified individual or business name will result in rejection." | Blocks ChatGPT | Complete in platform.openai.com → Settings → Organization → General before uploading. Individual verification works only if the listing shows "Denis Roman". |
 | 3 | **Demo video URL** is required for ChatGPT MCP review. | Blocks ChatGPT | Record the 5 test cases in ChatGPT after deploying (screen recording, 2 to 4 minutes), upload unlisted (YouTube or Loom), put the URL in `plugin/plugin.json` → `review.demo_recording_url` (currently a placeholder). |
 | 4 | **Claude carousel screenshots** (3 to 5 PNG, at least 1000 px wide, cropped to the app response) are required because the server has a UI. | Blocks Claude | Capture in Claude after deploying; see section C. |
-| 5 | **Upstream rate limit.** The recipe API allows 1,000 requests per 15 minutes per IP. The Worker caps itself at 60 cache misses per minute per Cloudflare location and caches hard, but a busy day across many locations could still hit 429s. | Medium | Optional: ask whoever runs `fix-me-a-drink-api` to exempt requests carrying a shared secret header (for example `x-garcon-mcp-key`) from the per-IP limit. Adding the header is a small change in `src/upstream.ts`. |
+| 5 | **Upstream rate limit.** The recipe API allows 1,000 requests per 15 minutes per IP. The Worker's own cap (`UPSTREAM_LIMITER`, 60 a minute) counts per Cloudflare location, not globally, and Workers egress IPs are shared and change, so neither number protects the API on its own. One cold `find` call can cost up to 40 API requests; in the local smoke run five cold calls spent a whole minute's budget. | **High, both hosts** | Ask the owner of `fix-me-a-drink-api` for a key or IP allowlist that exempts the Worker from the per-IP limit (for example a shared secret header such as `x-garcon-mcp-key`, sent from `src/upstream.ts`), and agree a real budget. Until then, expect "Garçon is handling a lot of requests" during review traffic spikes. |
+| 5a | **Workers Paid plan required.** A cold call makes up to 40 API requests plus Cache API reads and writes, and the recipe catalogue is about 2.2 MB of JSON. Workers Free allows 50 subrequests and 10 ms of CPU per request. | Blocks deploy | Put the account on Workers Paid before deploying. Do not remove the `ratelimits` block to get a deploy through. |
 | 6 | **ChatGPT `ui.domain` format.** OpenAI's quickstart example uses an origin (`https://example.com`), so the `/chatgpt/mcp` route sets `https://mcp.fixmeadrinkapp.com`. If the portal scan flags it, change `ui.domain` in `src/server.ts` (`widgetResourceMeta`) to the value the finding asks for and redeploy. | Low | Check the MCP scan findings. |
 | 7 | **Dofollow links are not verified.** Neither directory documents whether the website link on a listing is followed. | Info | After publishing, check the listing HTML for `rel="nofollow"` on the fixmeadrinkapp.com link. |
 | 8 | **Catalogue gaps.** No plain "Negroni", "Mojito" or "Margarita" in the catalogue, and the Margarita match is premium. Reviewers often try these. | Low | The tool says when the match is not exact and offers free alternatives. Test cases use drinks with free recipes. |
@@ -22,7 +23,7 @@ Prerequisites: access to the Cloudflare account that holds the `fixmeadrinkapp.c
 ```bash
 cd /Users/denisso/Documents/work/blankpage/fixmeadrink/garcon-mcp
 pnpm install
-pnpm test                 # expect 39 passed
+pnpm test                 # expect 73 passed
 pnpm typecheck
 npx wrangler login        # browser sign-in to the Cloudflare account with the zone
 npx wrangler deploy
@@ -30,14 +31,14 @@ npx wrangler deploy
 
 `wrangler.jsonc` declares `routes: [{ pattern: "mcp.fixmeadrinkapp.com", custom_domain: true }]`, so the deploy creates the Custom Domain. Cloudflare then creates the DNS record and the certificate (docs: https://developers.cloudflare.com/workers/configuration/routing/custom-domains/). No manual DNS step is needed. If the deploy says a record already exists, delete the `mcp` record in the DNS tab and deploy again.
 
-The three rate-limit bindings (`IP_LIMITER`, `CALLER_LIMITER`, `UPSTREAM_LIMITER`) need no setup. If the deploy rejects `ratelimits` on the current plan, remove the block from `wrangler.jsonc` and deploy: the code fails open, and caching still protects the API.
+The three rate-limit bindings (`IP_LIMITER`, `CALLER_LIMITER`, `UPSTREAM_LIMITER`) need no setup. Their counters are kept per Cloudflare location, so they are not global caps. `workers_dev` is off, so the Worker is only reachable on `mcp.fixmeadrinkapp.com`, where the Cache API works.
 
 Check the deploy:
 
 ```bash
 curl -s https://mcp.fixmeadrinkapp.com/ | head -5               # landing page
 curl -s -o /dev/null -w "%{http_code}\n" https://mcp.fixmeadrinkapp.com/privacy   # 200
-node _agent/scripts/smoke.mjs https://mcp.fixmeadrinkapp.com --legacy           # all tools, live
+node _agent/scripts/smoke.mjs https://mcp.fixmeadrinkapp.com    # both routes, both protocol eras; exits 1 on any mismatch
 npx @modelcontextprotocol/inspector     # optional: Streamable HTTP, https://mcp.fixmeadrinkapp.com/mcp
 ```
 
