@@ -16,6 +16,7 @@
 import {
   BRAND_FONTS,
   FONT_FILES,
+  ICONS,
   IMAGE_FILES,
   SYSTEM_FONT,
   TOKENS_CSS,
@@ -38,7 +39,11 @@ export interface ViewConfig {
   ageNote: string
   moreUrl: string
   peaceUrl: string
+  placeholderUrl: string
   mascot: string
+  star: string
+  chevronLeft: string
+  chevronRight: string
 }
 
 /**
@@ -65,45 +70,54 @@ function garconView(config) {
     if (items.length < 2) return items.join('');
     return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
   }
-  function tag(text, tone) {
-    return '<span class="tag' + (tone ? ' ' + tone : '') + '">' + esc(text) + '</span>';
-  }
-  function strengthLabel(strength) {
-    if (strength === 'Non Alcoholic') return 'Zero-proof';
-    if (strength === 'Low') return 'Low-proof';
-    return strength;
+  // components/ui/tag.tsx: the label sits in its own span with 2 px padding.
+  function tag(text, tone, icon) {
+    return '<span class="tag' + (tone ? ' ' + tone : '') + '">' + (icon || '') + '<span class="tag-label">' + esc(text) + '</span></span>';
   }
 
-  function card(item, images, lowProof) {
+  // components/garcon/recipe-card.tsx: one link per card. The photo (3:2,
+  // radius 24, elevation e2) carries the Plus badge top left; under it the
+  // name in title 2 medium, the tags row (success tag for "Ready to make",
+  // then the flavour tags) and one quiet note line.
+  function card(item, images) {
     var id = 'g' + (++nextId);
     var url = safeUrl(item && item.url, RECIPE);
     var img = safeUrl(images && images[item.url], IMAGE);
     var name = String((item && item.name) || 'Untitled drink');
+    var plus = item.premium === true
+      ? '<span class="tag plus" id="' + id + '-p">' + config.star + '<span class="tag-label">Plus</span></span>'
+      : '';
     var tags = '';
     if (item.can_make_now) tags += tag('Ready to make', 'ok');
-    if (lowProof && item.strength) tags += tag(strengthLabel(item.strength));
-    (item.flavors || []).slice(0, lowProof ? 2 : 3).forEach(function (flavor) { tags += tag(flavor); });
+    (item.flavors || []).forEach(function (flavor) { tags += tag(flavor); });
     var notes = [];
     if (!item.can_make_now && item.missing && item.missing.length) notes.push('Missing ' + words(item.missing));
     (item.depends_on || []).forEach(function (d) {
       if (d && d.ingredient && d.you_said) notes.push('Only if your ' + d.you_said + ' is ' + d.ingredient);
     });
-    var need = notes.length ? '<span class="need">' + esc(notes.join('. ')) + '</span>' : '';
-    var thumb = img
-      ? '<span class="thumb"><img src="' + esc(img) + '" alt="" width="64" height="64" loading="lazy" decoding="async"></span>'
-      : '<span class="thumb empty-thumb">' + config.mascot + '</span>';
-    var body = thumb +
-      '<span class="card-body"><h3 class="name" id="' + id + '-n">' + esc(name) + '</h3>' +
-      '<span class="details" id="' + id + '-d">' + (tags ? '<span class="tags">' + tags + '</span>' : '') + need + '</span></span>';
+    var note = notes.length ? '<span class="note-line">' + esc(notes.join('. ')) + '</span>' : '';
+    var photo = img
+      ? '<img class="photo" src="' + esc(img) + '" alt="' + esc(name) + '" loading="lazy" decoding="async">'
+      : '<span class="placeholder"><img src="' + esc(config.placeholderUrl) + '" alt="" width="32" height="32"></span>';
+    var body = '<span class="media">' + photo + plus + '</span>' +
+      '<span class="body"><h3 class="name" id="' + id + '-n">' + esc(name) + '</h3>' +
+      '<span class="details" id="' + id + '-d">' + (tags ? '<span class="tags">' + tags + '</span>' : '') + note + '</span></span>';
     if (!url) return '<li><div class="card">' + body + '</div></li>';
     return '<li><a class="card" href="' + esc(url) + '" data-href="' + esc(url) + '" target="_blank" rel="noopener noreferrer"' +
-      ' title="' + esc(name) + '" aria-labelledby="' + id + '-n" aria-describedby="' + id + '-d">' + body + '</a></li>';
+      ' aria-labelledby="' + id + '-n' + (plus ? ' ' + id + '-p' : '') + '" aria-describedby="' + id + '-d">' + body + '</a></li>';
   }
 
-  function section(key, title, items, images, lowProof) {
+  // A shelf of cards: a carousel at inline widths, the site's card grid from
+  // 640 px (CSS decides). The arrow pair is the site's stepper (quaternary
+  // xs icon buttons on a surface 2 pill); the list itself takes the keys.
+  function section(key, title, items, images, quiet) {
     if (!items || !items.length) return '';
-    return '<section aria-labelledby="' + key + '"><h2 id="' + key + '">' + esc(title) + '</h2><ul class="cards">' +
-      items.map(function (item) { return card(item, images, lowProof); }).join('') + '</ul></section>';
+    var arrows = '<span class="stepper" role="group" aria-label="Scroll ' + esc(title.toLowerCase()) + '">' +
+      '<button type="button" class="step" data-step="-1" aria-controls="' + key + '-list" aria-label="Previous drink">' + config.chevronLeft + '</button>' +
+      '<button type="button" class="step" data-step="1" aria-controls="' + key + '-list" aria-label="Next drink">' + config.chevronRight + '</button></span>';
+    return '<section class="shelf' + (quiet ? ' quiet' : '') + '" aria-labelledby="' + key + '"><div class="shelf-head"><h2 id="' + key + '">' + esc(title) + '</h2>' + arrows + '</div>' +
+      '<ul class="cards" id="' + key + '-list" tabindex="0" aria-labelledby="' + key + '">' +
+      items.map(function (item) { return card(item, images); }).join('') + '</ul></section>';
   }
 
   function footer() {
@@ -113,9 +127,11 @@ function garconView(config) {
       '<p class="age">' + esc(config.ageNote) + '</p></footer>';
   }
 
+  // RecipeCardSkeleton: the photo block, a title bar and two tags.
   function loading() {
-    var row = '<div class="sk-row"><span class="sk sk-thumb"></span><span class="sk-lines"><span class="sk sk-name"></span><span class="sk-tags"><span class="sk sk-tag"></span><span class="sk sk-tag"></span></span></span></div>';
-    return '<div class="skeleton" aria-hidden="true"><span class="sk sk-title"></span>' + row + row + row + '</div>';
+    var sk = '<li class="sk-card"><span class="sk sk-photo"></span><span class="body"><span class="sk sk-name"></span>' +
+      '<span class="sk-tags"><span class="sk sk-tag"></span><span class="sk sk-tag"></span></span></span></li>';
+    return '<div class="skeleton" aria-hidden="true"><span class="sk sk-title"></span><ul class="cards">' + sk + sk + sk + '</ul></div>';
   }
 
   // args: the tool input, when the host sent it. A zero_or_low search lists
@@ -136,7 +152,7 @@ function garconView(config) {
     } else {
       if (data.note) html += '<p class="lead">' + esc(data.note) + '</p>';
       var lowOnly = Boolean(args && args.strength === 'zero_or_low');
-      html += section('s-bar', lowOnly ? 'Low or zero-proof from your bar' : 'Drinks from your bar', cocktails, images, lowOnly);
+      html += section('s-bar', lowOnly ? 'Low or zero-proof from your bar' : 'Drinks from your bar', cocktails, images, false);
       html += section('s-low', 'Low or zero-proof', lowProof, images, true);
       if (notRecognised.length) html += '<p class="aside">Not recognised: ' + esc(words(notRecognised)) + '</p>';
     }
@@ -182,6 +198,65 @@ function garconView(config) {
   };
 }
 
+// Keyboard and arrow-button movement for one shelf. scroller is the list;
+// each card's li gives its position. Left and Right move one card (and move
+// focus with it when a card has focus), Home and End go to the ends. Does
+// nothing while the shelf is a grid that does not scroll.
+function garconCarousel(scroller, smooth) {
+  function cards() {
+    return Array.prototype.slice.call(scroller.querySelectorAll('.card'));
+  }
+  function positions(items) {
+    var first = items.length ? items[0].parentNode.offsetLeft : 0;
+    return items.map(function (item) { return item.parentNode.offsetLeft - first; });
+  }
+  function scrollable() {
+    return scroller.scrollWidth - scroller.clientWidth > 1;
+  }
+  function current(lefts) {
+    var best = 0;
+    lefts.forEach(function (left, index) {
+      if (Math.abs(left - scroller.scrollLeft) < Math.abs(lefts[best] - scroller.scrollLeft)) best = index;
+    });
+    return best;
+  }
+  function go(index, items) {
+    var lefts = positions(items || cards());
+    var target = Math.max(0, Math.min(lefts.length - 1, index));
+    scroller.scrollTo({ left: lefts[target], behavior: smooth ? 'smooth' : 'auto' });
+    return target;
+  }
+  function step(direction) {
+    if (!scrollable()) return -1;
+    var items = cards();
+    return go(current(positions(items)) + direction, items);
+  }
+  function onKey(event) {
+    if (!scrollable()) return false;
+    var items = cards();
+    var focused = items.indexOf(event.target);
+    var from = focused >= 0 ? focused : current(positions(items));
+    var target;
+    if (event.key === 'ArrowRight') target = from + 1;
+    else if (event.key === 'ArrowLeft') target = from - 1;
+    else if (event.key === 'Home') target = 0;
+    else if (event.key === 'End') target = items.length - 1;
+    else return false;
+    event.preventDefault();
+    target = go(target, items);
+    if (focused >= 0 && items[target] && typeof items[target].focus === 'function') items[target].focus({ preventScroll: true });
+    return true;
+  }
+  function state() {
+    return {
+      scrollable: scrollable(),
+      atStart: scroller.scrollLeft <= 1,
+      atEnd: scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 1
+    };
+  }
+  return { step: step, onKey: onKey, state: state };
+}
+
 function garconLinks(deps) {
   function fallback(url) {
     if (deps.openai && typeof deps.openai.openExternal === 'function') deps.openai.openExternal({ href: url });
@@ -223,10 +298,35 @@ const BOOT_JS = /* js */ `
   });
 
   var live = document.getElementById('live');
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var shelves = {};
+
+  // Arrow buttons follow the list: disabled at either end, hidden while the
+  // shelf is a grid or everything fits.
+  function syncShelf(list) {
+    var shelf = shelves[list.id];
+    var stepper = list.parentNode.querySelector('.stepper');
+    if (!shelf || !stepper) return;
+    var state = shelf.state();
+    stepper.hidden = !state.scrollable;
+    stepper.querySelector('[data-step="-1"]').disabled = state.atStart;
+    stepper.querySelector('[data-step="1"]').disabled = state.atEnd;
+  }
+  function setupShelves() {
+    shelves = {};
+    Array.prototype.forEach.call(root.querySelectorAll('ul.cards[id]'), function (list) {
+      shelves[list.id] = garconCarousel(list, !reduceMotion);
+      list.addEventListener('keydown', shelves[list.id].onKey);
+      list.addEventListener('scroll', function () { syncShelf(list); }, { passive: true });
+      syncShelf(list);
+    });
+  }
+
   function show(html, busy, status) {
     root.innerHTML = html;
     root.setAttribute('aria-busy', busy ? 'true' : 'false');
     if (status) live.textContent = status;
+    setupShelves();
     reportSize();
   }
 
@@ -244,26 +344,35 @@ const BOOT_JS = /* js */ `
   }
 
   root.addEventListener('click', function (event) {
+    var button = event.target.closest && event.target.closest('button[data-step]');
+    if (button) {
+      var id = button.getAttribute('aria-controls');
+      if (shelves[id]) shelves[id].step(Number(button.getAttribute('data-step')));
+      return;
+    }
     var link = event.target.closest && event.target.closest('a[data-href]');
     if (!link) return;
     event.preventDefault();
     var url = link.getAttribute('data-href');
     if (view.isRecipeUrl(url)) openLink(url);
   });
-  // A recipe photo that fails to load falls back to the mascot placeholder.
+  // A recipe photo that fails to load falls back to the card's placeholder.
   root.addEventListener('error', function (event) {
     var img = event.target;
     if (!img || img.tagName !== 'IMG') return;
-    var thumb = img.parentNode;
-    if (thumb && thumb.classList && thumb.classList.contains('thumb')) {
-      thumb.classList.add('empty-thumb');
-      thumb.innerHTML = CONFIG.mascot;
+    if (img.classList.contains('photo')) {
+      var holder = document.createElement('span');
+      holder.className = 'placeholder';
+      holder.innerHTML = '<img alt="" width="32" height="32">';
+      holder.firstChild.src = CONFIG.placeholderUrl;
+      img.replaceWith(holder);
     } else {
       img.remove();
     }
   }, true);
 
   function reportSize() {
+    Array.prototype.forEach.call(root.querySelectorAll('ul.cards[id]'), syncShelf);
     var height = Math.ceil(document.documentElement.getBoundingClientRect().height);
     notify('ui/notifications/size-changed', { height: height });
     if (window.openai && typeof window.openai.notifyIntrinsicHeight === 'function') window.openai.notifyIntrinsicHeight(height);
@@ -327,16 +436,17 @@ const WIDGET_CSS = /* css */ `
     --c-muted: light-dark(var(--fg-med-em), var(--fg-base-em)); /* text/med_em; dark: text/base_em */
     --c-faint: light-dark(var(--fg-low-em), var(--fg-base-em)); /* text/low_em; dark: text/base_em */
     --c-fill: light-dark(var(--surface-2), color-mix(in srgb, var(--surface-0) 9%, transparent)); /* tag secondary fill: surface_2 */
-    --c-fill-strong: light-dark(var(--surface-3), color-mix(in srgb, var(--surface-0) 13%, transparent)); /* image placeholder, skeleton: surface_3 */
-    --c-hover: light-dark(var(--surface-1), color-mix(in srgb, var(--surface-0) 5%, transparent)); /* text-only row hover: surface_1 */
+    --c-fill-strong: light-dark(var(--surface-3), color-mix(in srgb, var(--surface-0) 13%, transparent)); /* photo placeholder, skeleton: surface_3 */
+    --c-hover: light-dark(var(--surface-3), color-mix(in srgb, var(--surface-0) 14%, transparent)); /* icon button quaternary hover: surface_3 on the surface_2 pill */
     --c-rule: light-dark(var(--outline-low-em), var(--outline-white-16)); /* divider: outline/low_em */
     --c-mark: light-dark(var(--fg-med-em), var(--fg-base-em)); /* logo mark and wordmark: text/med_em */
-    --c-placeholder: light-dark(var(--fg-base-em), color-mix(in srgb, var(--surface-0) 32%, transparent)); /* text/base_em */
-    --c-link: light-dark(var(--fg-secondary-med-em), color-mix(in srgb, var(--fg-secondary-med-em) 55%, var(--surface-0))); /* link primary: text/secondary_med_em */
-    --c-ok: light-dark(var(--fg-success-high-em), color-mix(in srgb, var(--fg-success-high-em) 45%, var(--surface-0))); /* success tag text */
-    --c-ok-fill: light-dark(var(--surface-success-base-em-alpha), color-mix(in srgb, var(--fg-success-high-em) 28%, transparent)); /* success tag fill */
-    --c-warn: light-dark(var(--fg-warning-high-em), color-mix(in srgb, var(--fg-warning-high-em) 45%, var(--surface-0))); /* warning note text */
-    --c-warn-fill: light-dark(var(--surface-warning-base-em-alpha), color-mix(in srgb, var(--surface-warning-high-em) 12%, transparent)); /* warning note fill */
+    --c-disabled: light-dark(var(--fg-base-em), color-mix(in srgb, var(--surface-0) 30%, transparent)); /* disabled icon: text/base_em */
+    --c-link: light-dark(var(--fg-primary-high-em), var(--outline-primary-med-em)); /* link inline: text/primary_high_em */
+    --c-link-line: light-dark(var(--outline-primary-med-em), color-mix(in srgb, var(--outline-primary-med-em) 50%, transparent)); /* link inline underline: outline/primary_med_em */
+    --c-ok: light-dark(var(--fg-success-high-em), color-mix(in srgb, var(--fg-success-high-em) 45%, var(--surface-0))); /* tag success text */
+    --c-ok-fill: light-dark(var(--surface-success-base-em-alpha), color-mix(in srgb, var(--fg-success-high-em) 28%, transparent)); /* tag success fill */
+    --c-warn: light-dark(var(--fg-warning-high-em), color-mix(in srgb, var(--fg-warning-high-em) 45%, var(--surface-0))); /* tool note warning text */
+    --c-warn-fill: light-dark(var(--surface-warning-base-em-alpha), color-mix(in srgb, var(--surface-warning-high-em) 12%, transparent)); /* tool note warning fill */
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: transparent; }
@@ -349,84 +459,119 @@ const WIDGET_CSS = /* css */ `
     -webkit-font-smoothing: antialiased;
   }
   main {
-    container-type: inline-size;
-    display: grid; gap: var(--space-xxxl);
-    padding: calc(var(--space-lg) + var(--safe-top, 0px)) calc(var(--space-md) + var(--safe-right, 0px))
-      calc(var(--space-lg) + var(--safe-bottom, 0px)) calc(var(--space-md) + var(--safe-left, 0px));
+    display: grid; gap: var(--space-4xl);
+    padding: calc(var(--space-lg) + var(--safe-top, 0px)) calc(var(--space-xxl) + var(--safe-right, 0px))
+      calc(var(--space-lg) + var(--safe-bottom, 0px)) calc(var(--space-xxl) + var(--safe-left, 0px));
   }
   p { margin: 0; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-  section { display: grid; gap: var(--space-xs); }
+  /* a shelf: heading row, then the cards */
+  .shelf { display: grid; gap: var(--space-lg); min-width: 0; }
+  .shelf-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
   h2 {
-    margin: 0; padding-inline: var(--space-md);
-    font-family: var(--font-heading); font-weight: 600;
+    margin: 0; font-family: var(--font-heading); font-weight: 600;
     font-size: var(--text-title-2); line-height: var(--leading-title-2); letter-spacing: var(--tracking-title-2);
     text-wrap: balance;
   }
-  .cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-xxs); }
-  @container (min-width: 560px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-md); } }
+  .quiet h2 { font-family: var(--font-body); font-weight: 500; color: var(--c-muted);
+    font-size: var(--text-body-1); line-height: var(--leading-body-1); letter-spacing: var(--tracking-body-1); }
 
-  /* recipe_card, horizontal: the photo as the ingredient card's thumb */
-  .card {
-    display: grid; grid-template-columns: var(--size-thumb) minmax(0, 1fr); align-items: start; gap: var(--space-lg);
-    padding: var(--space-md); border-radius: var(--radius-20);
-    color: inherit; text-decoration: none;
-    transition: background-color 150ms ease-out;
+  /* recipe page servings stepper: two quaternary xs icon buttons on a surface 2 pill */
+  .stepper { display: flex; align-items: center; gap: var(--space-xs); padding: var(--space-xs);
+    border-radius: var(--radius-8); background: var(--c-fill); box-shadow: var(--shadow-special-drop); }
+  .stepper[hidden] { display: none; }
+  .step {
+    position: relative; display: inline-flex; align-items: center; justify-content: center;
+    width: var(--size-control-xs); height: var(--size-control-xs); padding: 0;
+    border: 1px solid transparent; border-radius: var(--radius-6); background: transparent; color: var(--c-muted);
+    cursor: pointer; transition: color 150ms ease-out, background-color 150ms ease-out, transform 150ms ease-out;
   }
+  .step::after { content: ""; position: absolute; inset: calc(-1 * var(--space-md)); } /* 40 px hit area, as the site's xs icon button */
+  .step svg { width: var(--size-icon-sm); height: var(--size-icon-sm); }
+  @media (hover: hover) { .step:hover:not(:disabled) { background: var(--c-hover); color: var(--c-text); } }
+  @media (prefers-reduced-motion: no-preference) { .step:active:not(:disabled) { transform: scale(0.96); } }
+  .step:disabled { color: var(--c-disabled); cursor: default; }
+  .step:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 0; }
+
+  /* the list: a carousel below 640 px, the site's CardGrid (columns 3) from there */
+  .cards {
+    list-style: none; margin: 0; padding: 0;
+    display: grid; grid-auto-flow: column; grid-auto-columns: 72%; gap: var(--space-xxl);
+    overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none;
+    /* bleed to the frame edge so the next card is cut by it, and leave room for the lift and shadow */
+    margin-inline: calc(-1 * var(--space-xxl)); padding: var(--space-xs) var(--space-xxl) var(--space-md);
+    scroll-padding-inline: var(--space-xxl);
+    position: relative;
+  }
+  .cards::-webkit-scrollbar { display: none; }
+  .cards > li { display: flex; min-width: 0; scroll-snap-align: start; }
+  .cards > li > * { flex: 1; }
+  .cards:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: calc(-1 * var(--focus-ring-width)); border-radius: var(--radius-24); }
+  @media (min-width: 640px) {
+    .cards { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: repeat(2, minmax(0, 1fr));
+      overflow: visible; scroll-snap-type: none; margin-inline: 0; padding: 0; }
+    .stepper { display: none; }
+  }
+  @media (min-width: 1024px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+  /* recipe_card (components/garcon/recipe-card.tsx) */
+  .card { display: flex; flex-direction: column; min-width: 0; border-radius: var(--radius-24); color: inherit; text-decoration: none; }
   a.card:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 0; }
-  @media (hover: hover) { a.card:hover { background: var(--c-hover); } }
-  .thumb {
-    position: relative; display: grid; place-items: center;
-    width: var(--size-thumb); height: var(--size-thumb); overflow: hidden;
-    border-radius: var(--radius-12); background: var(--c-fill-strong); box-shadow: var(--shadow-e2);
+  .media {
+    position: relative; display: block; width: 100%; aspect-ratio: 3 / 2; overflow: hidden; /* aspect-recipe */
+    border-radius: var(--radius-24); background: var(--c-fill-strong); box-shadow: var(--shadow-e2);
     transition: box-shadow 150ms ease-out, transform 150ms ease-out;
   }
-  .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
-  .empty-thumb { color: var(--c-placeholder); }
-  .empty-thumb svg { width: var(--size-icon-xxl); height: auto; }
-  @media (hover: hover) { a.card:hover .thumb { box-shadow: var(--shadow-e3); } }
-  @media (hover: hover) and (prefers-reduced-motion: no-preference) { a.card:hover .thumb { transform: translateY(calc(-1 * var(--space-xxs))); } }
-  @media (prefers-reduced-motion: no-preference) { a.card:active .thumb { transform: scale(0.98); } }
-  .card-body { display: grid; gap: var(--space-xs); min-width: 0; }
+  .photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .placeholder img { width: var(--space-6xl); height: var(--space-6xl); border-radius: 50%; }
+  @media (hover: hover) { a.card:hover .media { box-shadow: var(--shadow-e3); } }
+  @media (hover: hover) and (prefers-reduced-motion: no-preference) { a.card:hover .media { transform: translateY(calc(-1 * var(--space-xs))); } }
+  @media (prefers-reduced-motion: no-preference) { a.card:active .media { transform: scale(0.98); } }
+  .body { display: flex; flex-direction: column; gap: var(--space-md); padding: var(--space-lg); }
   .name {
-    margin: 0; font-weight: 500;
-    font-size: var(--text-title-1); line-height: var(--leading-title-1); letter-spacing: var(--tracking-title-1);
-    overflow-wrap: anywhere;
-    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+    margin: 0; font-weight: 500; color: var(--c-text); overflow-wrap: break-word;
+    font-size: var(--text-title-2); line-height: var(--leading-title-2); letter-spacing: var(--tracking-title-2);
   }
-  .details { display: grid; gap: var(--space-xs); }
+  .details { display: flex; flex-direction: column; gap: var(--space-md); }
   .details:empty { display: none; }
-  /* tags, size xs: secondary, and success for "Ready to make" */
   .tags { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+
+  /* tags, size xs (components/ui/tag.tsx): secondary, success, and the Plus badge */
   .tag {
-    display: inline-flex; align-items: center; min-height: var(--size-control-xs); max-width: 100%;
-    padding: var(--space-xxs) var(--space-md); border-radius: var(--radius-6);
+    position: relative; display: inline-flex; align-items: center; justify-content: center; max-width: 100%;
+    min-height: var(--size-control-xs); padding: var(--space-xxs) var(--space-sm);
+    border: 1px solid transparent; border-radius: var(--radius-6); box-shadow: var(--shadow-special-drop);
     font-size: var(--text-caption-1); line-height: var(--leading-caption-1); letter-spacing: var(--tracking-caption-1); font-weight: 500;
-    background: var(--c-fill); color: var(--c-muted); box-shadow: var(--shadow-special-drop);
+    background: var(--c-fill); color: var(--c-muted);
   }
+  .tag-label { padding-inline: var(--space-xxs); }
   .tag.ok { background: var(--c-ok-fill); color: var(--c-ok); }
-  .need, .aside, .age {
+  /* plus-badge.tsx, onImage: warning tag made opaque over the photo, amber star */
+  .tag.plus { position: absolute; left: var(--space-lg); top: var(--space-lg);
+    background: var(--surface-warning-overlay); color: var(--fg-warning-overlay); box-shadow: var(--shadow-e2); }
+  .tag.plus .star { flex: none; width: var(--size-icon-xs); height: var(--size-icon-xs); color: var(--surface-warning-high-em); }
+
+  .note-line, .aside, .age {
     font-size: var(--text-caption-2); line-height: var(--leading-caption-2); letter-spacing: var(--tracking-caption-2);
     color: var(--c-muted); overflow-wrap: anywhere;
   }
-  .aside, .lead { padding-inline: var(--space-md); }
   .lead { color: var(--c-muted); }
 
-  .empty { display: flex; align-items: center; gap: var(--space-lg); padding-inline: var(--space-md); }
+  .empty { display: flex; align-items: center; gap: var(--space-lg); }
   .empty-art { flex: none; width: var(--size-thumb); height: var(--size-thumb); object-fit: contain; }
   .empty-text { display: grid; gap: var(--space-xxs); }
-  .empty-text .lead { padding: 0; }
   .empty-title, .note-title { font-weight: 500; color: var(--c-text); }
   .empty-title { font-size: var(--text-title-1); line-height: var(--leading-title-1); letter-spacing: var(--tracking-title-1); }
 
   /* tool note, tone warning */
-  .note { display: grid; gap: var(--space-xs); margin-inline: var(--space-md); padding: var(--space-xxl); border-radius: var(--radius-12); box-shadow: var(--shadow-special-drop); }
+  .note { display: grid; gap: var(--space-xs); padding: var(--space-xxl); border-radius: var(--radius-12); box-shadow: var(--shadow-special-drop); }
   .note.warn { background: var(--c-warn-fill); color: var(--c-warn); }
   .note.warn .note-title { color: inherit; }
 
-  /* site footer bottom bar: logo sm, then the links */
-  .foot { display: grid; gap: var(--space-xxs); margin-inline: var(--space-md); padding-top: var(--space-md); border-top: 1px solid var(--c-rule); }
+  /* site footer bottom bar: logo sm, then the link */
+  .foot { display: grid; gap: var(--space-xxs); padding-top: var(--space-md); border-top: 1px solid var(--c-rule); }
   .foot-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; column-gap: var(--space-lg); }
   .logo { display: inline-flex; align-items: center; gap: var(--space-xs); color: var(--c-mark); }
   .logo svg { width: 26px; height: 24px; } /* logo.tsx size sm: mark 26 x 24 */
@@ -434,28 +579,30 @@ const WIDGET_CSS = /* css */ `
     font-family: var(--font-heading); font-weight: 600;
     font-size: var(--text-wordmark-sm); line-height: var(--leading-wordmark-sm); letter-spacing: var(--tracking-wordmark-sm);
   }
+  /* link, variant inline (components/ui/link.tsx) */
   .more {
     display: inline-flex; align-items: center; min-height: var(--size-control-lg); /* 44 pt tap target (Claude guidelines) */
     margin-inline: calc(-1 * var(--space-xs)); padding-inline: var(--space-xs); border-radius: var(--radius-6);
-    font-size: var(--text-caption-2); line-height: var(--leading-caption-2); letter-spacing: var(--tracking-caption-2); font-weight: 500;
-    color: var(--c-link); text-decoration: none; text-underline-offset: 4px;
+    font-size: var(--text-caption-2); line-height: var(--leading-caption-2); letter-spacing: var(--tracking-caption-2);
+    color: var(--c-link); text-decoration: underline; text-decoration-color: var(--c-link-line);
+    text-decoration-thickness: 1px; text-underline-offset: 4px;
   }
-  @media (hover: hover) { .more:hover { text-decoration: underline; } }
+  @media (hover: hover) { .more:hover { text-decoration-color: currentColor; } }
   .more:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 0; }
   .age { color: var(--c-faint); }
 
-  /* skeleton: surface 3 blocks, radius 4, pulse only with motion allowed */
-  .skeleton { display: grid; gap: var(--space-xxs); }
+  /* RecipeCardSkeleton: surface 3 blocks, radius 4, pulse only with motion allowed */
+  .skeleton { display: grid; gap: var(--space-lg); }
+  .skeleton .cards { overflow: hidden; }
   .sk { display: block; border-radius: var(--radius-4); background: var(--c-fill-strong); }
   @media (prefers-reduced-motion: no-preference) { .sk { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; } }
   @keyframes pulse { 50% { opacity: 0.5; } }
-  .sk-title { width: 45%; height: var(--leading-title-2); margin: 0 var(--space-md) var(--space-xs); }
-  .sk-row { display: grid; grid-template-columns: var(--size-thumb) minmax(0, 1fr); align-items: center; gap: var(--space-lg); padding: var(--space-md); }
-  .sk-thumb { width: var(--size-thumb); height: var(--size-thumb); border-radius: var(--radius-12); }
-  .sk-lines { display: grid; gap: var(--space-md); }
-  .sk-name { width: 55%; height: var(--text-title-1); }
+  .sk-card { display: flex; flex-direction: column; }
+  .sk-title { width: 45%; height: var(--leading-title-2); }
+  .sk-photo { width: 100%; aspect-ratio: 3 / 2; border-radius: var(--radius-24); box-shadow: var(--shadow-e2); }
+  .sk-name { width: 50%; height: var(--space-4xl); }
   .sk-tags { display: flex; gap: var(--space-sm); }
-  .sk-tag { width: var(--space-8xl); height: var(--size-control-xs); border-radius: var(--radius-6); }
+  .sk-tag { width: var(--space-8xl); height: var(--space-4xl); }
 `
 
 export function widgetHtml({ brandFonts, assetOrigin = MCP_ORIGIN }: WidgetOptions) {
@@ -463,7 +610,11 @@ export function widgetHtml({ brandFonts, assetOrigin = MCP_ORIGIN }: WidgetOptio
     ageNote: AGE_NOTE,
     moreUrl: BY_INGREDIENTS_TOOL_URL,
     peaceUrl: `${assetOrigin}${IMAGE_FILES.peace}`,
+    placeholderUrl: `${assetOrigin}${IMAGE_FILES.placeholder}`,
     mascot: mascotSvg('mark'),
+    star: ICONS.star,
+    chevronLeft: ICONS.chevronLeft,
+    chevronRight: ICONS.chevronRight,
   }
   const fonts = brandFonts
     ? `<link rel="preload" href="${assetOrigin}${FONT_FILES.text}" as="font" type="font/woff2" crossorigin>

@@ -24,7 +24,7 @@
 //
 // Query:
 //   ?theme=light|dark
-//   ?case=result|lowproof|empty|error|cancel|loading|long|noimage
+//   ?case=result|lowproof|empty|error|cancel|loading|long|noimage|plus
 //   ?width=420           frame width in px (the host's container width)
 //   ?route=/mcp|/chatgpt/mcp
 //   ?bar=gin,lime        ingredients for result-style cases
@@ -74,6 +74,8 @@ window.harnessLog = log
   const result = scenario === 'loading' || scenario === 'cancel' ? null : await rpc('tools/call', { name: 'find_cocktails_by_ingredients', arguments: args })
   if (result && scenario === 'long') result.structuredContent.cocktails[0].name = 'The Extremely Long Midsummer Garden Party Elderflower and Cucumber Gin Fizz Royale'
   if (result && scenario === 'noimage') result._meta = { images: {} }
+  // Demo only: find never returns premium recipes; this marks the first card to show the Plus badge.
+  if (result && scenario === 'plus') result.structuredContent.cocktails[0].premium = true
 
   window.addEventListener('message', (e) => {
     if (e.source !== frame.contentWindow) return

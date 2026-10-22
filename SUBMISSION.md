@@ -23,7 +23,7 @@ Prerequisites: access to the Cloudflare account that holds the `fixmeadrinkapp.c
 ```bash
 cd /Users/denisso/Documents/work/blankpage/fixmeadrink/garcon-mcp
 pnpm install
-pnpm test                 # expect 105 passed
+pnpm test                 # expect 111 passed
 pnpm typecheck
 npx wrangler login        # browser sign-in to the Cloudflare account with the zone
 npx wrangler deploy
