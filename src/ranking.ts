@@ -164,48 +164,53 @@ export function compareWithBar(recipe: RawRecipe, bar: readonly ResolvedTerm[]):
     }
   }
 
+  // Substitutes and vague bottles each cover at most one ingredient, so they
+  // are matched together: as many ingredients as possible first, then as
+  // many of those owned (substitutes) as possible. The open ingredients go
+  // in name order, so the order of the recipe's rows never changes the result.
   const covered = required.map((name) => definite.has(normalize(name)))
-  // One-bottle substitutes first: owned, but each covers one ingredient.
-  const unowned = required.flatMap((_, index) => (covered[index] ? [] : [index]))
-  assignBottles(unowned.map((index) => normalize(required[index])), substitutes).forEach((slot) => {
-    if (slot !== -1) covered[unowned[slot]] = true
-  })
-  const open = required.flatMap((_, index) => (covered[index] ? [] : [index]))
-  const holders = assignBottles(
+  const open = required
+    .flatMap((_, index) => (covered[index] ? [] : [index]))
+    .sort((a, b) => normalize(required[a]).localeCompare(normalize(required[b])))
+  const owners = matchBottles(
     open.map((index) => normalize(required[index])),
-    bottles.map((bottle) => bottle.names)
+    [...substitutes, ...bottles.map((bottle) => bottle.names)]
   )
-  const dependsOn: Dependency[] = []
-  const conditional = new Set<number>()
-  holders.forEach((slot, bottle) => {
-    if (slot === -1) return
-    conditional.add(open[slot])
-    dependsOn.push({ ingredient: required[open[slot]], you_said: bottles[bottle].you_said })
+  const dependsBy = new Map<number, string>()
+  owners.forEach((bottle, slot) => {
+    if (bottle === -1) return
+    if (bottle < substitutes.length) covered[open[slot]] = true
+    else dependsBy.set(open[slot], bottles[bottle - substitutes.length].you_said)
   })
   return {
     have: required.filter((_, index) => covered[index]),
-    missing: required.filter((_, index) => !covered[index] && !conditional.has(index)),
-    dependsOn,
+    missing: required.filter((_, index) => !covered[index] && !dependsBy.has(index)),
+    dependsOn: required.flatMap((name, index) => {
+      const you_said = dependsBy.get(index)
+      return you_said === undefined ? [] : [{ ingredient: name, you_said }]
+    }),
     missingGarnish,
   }
 }
 
 /**
- * The most ingredients vague bottles can stand in for, each bottle used once
- * (augmenting paths). Returns, per bottle, the ingredient it covers or -1.
+ * Matches bottles to ingredients, one each, by augmenting paths taken in
+ * bottle order. A bottle matched once stays matched, so the result covers
+ * the most ingredients possible and, among those matchings, uses the most
+ * bottles from the front of the list. Returns, per ingredient, its bottle or -1.
  */
-function assignBottles(ingredients: readonly string[], bottles: readonly ReadonlySet<string>[]) {
-  const holder = new Array<number>(bottles.length).fill(-1)
-  const place = (ingredient: number, tried: Set<number>): boolean =>
-    bottles.some((names, bottle) => {
-      if (tried.has(bottle) || !names.has(ingredients[ingredient])) return false
-      tried.add(bottle)
-      if (holder[bottle] !== -1 && !place(holder[bottle], tried)) return false
-      holder[bottle] = ingredient
+function matchBottles(ingredients: readonly string[], bottles: readonly ReadonlySet<string>[]) {
+  const owner = new Array<number>(ingredients.length).fill(-1)
+  const assign = (bottle: number, tried: Set<number>): boolean =>
+    ingredients.some((name, slot) => {
+      if (tried.has(slot) || !bottles[bottle].has(name)) return false
+      tried.add(slot)
+      if (owner[slot] !== -1 && !assign(owner[slot], tried)) return false
+      owner[slot] = bottle
       return true
     })
-  ingredients.forEach((_, ingredient) => place(ingredient, new Set()))
-  return holder
+  bottles.forEach((_, bottle) => assign(bottle, new Set()))
+  return owner
 }
 
 export interface Match {

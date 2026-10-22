@@ -101,7 +101,6 @@ export const TOKENS_CSS = `
     --size-peek: 350px; /* GarconPeek width over an edge */
     --size-header: 72px; /* site_header height */
     --size-control-xs: 24px; /* tag xs height */
-    --size-control-sm: 32px; /* button sm height */
     --size-control-md: 40px; /* button md height */
     --size-control-lg: 48px; /* button lg height */
 
@@ -109,7 +108,6 @@ export const TOKENS_CSS = `
     --radius-4: 4px; /* radius/border_radius_4: skeleton blocks */
     --radius-6: 6px; /* radius/border_radius_6: tags xs */
     --radius-8: 8px; /* radius/border_radius_8 */
-    --radius-10: 10px; /* radius/border_radius_10 */
     --radius-12: 12px; /* radius/border_radius_12: notes, text-only recipe row */
     --radius-16: 16px; /* radius/border_radius_16 */
     --radius-20: 20px; /* radius/border_radius_20: a row around a radius-12 thumb with 8 px padding */

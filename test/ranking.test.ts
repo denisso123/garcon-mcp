@@ -99,10 +99,31 @@ describe('compareWithBar', () => {
   it('lets a one-bottle substitute cover one ingredient, definitely', () => {
     const syrup: ResolvedTerm = { you_said: 'simple syrup', matched_as: ['Rich Simple (2:1) syrup', 'Plain Simple'], single_bottle: true }
     expect(compareWithBar(recipe('r', ['Rich Simple (2:1) syrup', 'Plain Simple']), [syrup])).toMatchObject({
-      have: ['Rich Simple (2:1) syrup'],
-      missing: ['Plain Simple'],
+      have: ['Plain Simple'],
+      missing: ['Rich Simple (2:1) syrup'],
       dependsOn: [],
     })
+  })
+
+  it('gives the same answer for any order of the recipe rows (audit 4, finding 1)', () => {
+    const syrup: ResolvedTerm = { you_said: 'simple syrup', matched_as: ['Rich Simple (2:1) syrup', 'Plain Simple'], single_bottle: true }
+    const vagueSyrup = vague('syrup', ['Rich Simple (2:1) syrup', 'Honey syrup (3:1)'])
+    const rows = [['Rich Simple (2:1) syrup', 'Plain Simple'], ['Plain Simple', 'Rich Simple (2:1) syrup']]
+    for (const order of rows) {
+      const result = compareWithBar(recipe('r', order), [syrup, vagueSyrup])
+      expect(result.missing, order.join(', ')).toEqual([])
+      expect(result.have).toEqual(['Plain Simple'])
+      expect(result.dependsOn).toEqual([{ ingredient: 'Rich Simple (2:1) syrup', you_said: 'syrup' }])
+    }
+    // Every permutation of a larger recipe scores the same.
+    const names = ['Rich Simple (2:1) syrup', 'Plain Simple', 'Honey syrup (3:1)', 'Lime Juice']
+    const permutations = (list: string[]): string[][] =>
+      list.length <= 1 ? [list] : list.flatMap((item, i) => permutations([...list.slice(0, i), ...list.slice(i + 1)]).map((rest) => [item, ...rest]))
+    const scores = permutations(names).map((order) => {
+      const result = compareWithBar(recipe('r', order), [syrup, vagueSyrup, term(['Lime Juice'])])
+      return JSON.stringify([[...result.have].sort(), [...result.missing].sort(), result.dependsOn.map((d) => d.ingredient).sort()])
+    })
+    expect(new Set(scores).size).toBe(1)
   })
 
   it('compares names without case or accent differences', () => {
@@ -185,31 +206,58 @@ describe('bestMatches', () => {
     expect(complete).toBe(true)
   })
 
-  it('returns exactly what exhaustive ranking returns whenever it says the answer is complete', async () => {
-    // Deterministic pseudo-random fixtures that cross the 8-candidate batch boundary.
-    let seed = 7
-    const next = (n: number) => {
-      seed = (seed * 1103515245 + 12345) % 2147483648
-      return seed % n
+  it('returns exactly what exhaustive ranking returns, across ceilings, conditional matches and pruned searches', async () => {
+    // mulberry32: a small seeded generator that stays within 32-bit integers.
+    let state = 0x9e3779b9
+    const random = () => {
+      state = (state + 0x6d2b79f5) | 0
+      let t = Math.imul(state ^ (state >>> 15), 1 | state)
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296
     }
-    for (let round = 0; round < 200; round++) {
-      const size = 9 + next(12)
-      const ceiling = 1 + next(4)
+    const next = (n: number) => Math.floor(random() * n)
+    const coverage = { ceilings: new Set<number>(), nonEmpty: 0, conditional: 0, pruned: 0 }
+
+    for (let round = 0; round < 300; round++) {
+      const size = 9 + next(16)
+      const ceiling = 1 + next(5)
       const specs = Array.from({ length: size }, () => {
         const have = next(ceiling + 1)
-        return { have, missing: next(3), count: have + next(3) }
+        return { have, missing: next(3), depends: next(4) === 0 ? 1 + next(2) : 0, count: have + next(3) }
       })
       const list = specs.map((spec, order) => ({ preview: preview(`c${order}`, { ingredientCount: spec.count }), order, apiMissing: 0 }))
-      const scored = (candidate: GroupCandidate) => {
+      const scored = (candidate: GroupCandidate): Match => {
         const spec = specs[candidate.order]
-        return { ...match(candidate.preview.id, spec.have, spec.missing, candidate.order), candidate }
+        const base = match(candidate.preview.id, spec.have, spec.missing, candidate.order)
+        const dependsOn = Array.from({ length: spec.depends }, (_, i) => ({ ingredient: `d${i}`, you_said: 'vermouth' }))
+        return { candidate, comparison: { ...base.comparison, dependsOn } }
       }
       const limit = 1 + next(5)
-      const { matches, complete } = await bestMatches(list, limit, 32, async (batch) => batch.map(scored), ceiling)
-      const exhaustive = rankMatches(list.map(scored).filter((m) => m.comparison.have.length > 0)).slice(0, limit)
+      let checked = 0
+      const { matches, complete } = await bestMatches(
+        list,
+        limit,
+        64,
+        async (batch) => {
+          checked += batch.length
+          return batch.map(scored)
+        },
+        ceiling
+      )
+      const kept = list.map(scored).filter((m) => m.comparison.have.length > 0 || m.comparison.dependsOn.length > 0)
+      const exhaustive = rankMatches(kept).slice(0, limit)
       expect(complete).toBe(true)
       expect(ids(matches.map((m) => m.candidate))).toEqual(ids(exhaustive.map((m) => m.candidate)))
+
+      coverage.ceilings.add(ceiling)
+      if (exhaustive.length > 0) coverage.nonEmpty++
+      if (exhaustive.some((m) => m.comparison.dependsOn.length > 0)) coverage.conditional++
+      if (checked < size) coverage.pruned++
     }
+    expect(coverage.ceilings.size).toBe(5)
+    expect(coverage.nonEmpty).toBeGreaterThan(250)
+    expect(coverage.conditional).toBeGreaterThan(30)
+    expect(coverage.pruned).toBeGreaterThan(30)
   })
 
   it('checks a whole close group, because a garnish can hide a complete match', async () => {

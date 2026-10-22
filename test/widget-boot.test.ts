@@ -47,7 +47,7 @@ function target(selectorMatch: string, attributes: Record<string, string>) {
   }
 }
 
-function boot(options: { openai?: Record<string, unknown> } = {}) {
+function boot(options: { openai?: Record<string, unknown>; standalone?: boolean } = {}) {
   const html = widgetHtml({ brandFonts: true })
   const script = html.slice(html.indexOf('<script>') + 8, html.lastIndexOf('</script>'))
   const elements = { root: new FakeElement(), live: new FakeElement(), 'link-help': new FakeElement() }
@@ -55,7 +55,7 @@ function boot(options: { openai?: Record<string, unknown> } = {}) {
   const posted: Record<string, unknown>[] = []
   const windowListeners = new Map<string, Listener[]>()
   const parent = { postMessage: (message: Record<string, unknown>) => posted.push(message) }
-  const fakeWindow = {
+  const fakeWindow: Record<string, unknown> & { open: ReturnType<typeof vi.fn> } = {
     parent,
     openai: options.openai,
     open: vi.fn(() => ({})),
@@ -69,6 +69,7 @@ function boot(options: { openai?: Record<string, unknown> } = {}) {
     getElementById: (id: keyof typeof elements) => elements[id],
     createElement: () => new FakeElement(),
   }
+  if (options.standalone) fakeWindow.parent = fakeWindow
   new Function('window', 'document', script)(fakeWindow, fakeDocument)
 
   const fromHost = (data: Record<string, unknown>) => {
@@ -80,7 +81,13 @@ function boot(options: { openai?: Record<string, unknown> } = {}) {
     fromHost({ id: request.id, result })
   }
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
-  return { elements, documentElement, posted, fromHost, requests, answer, settle, fakeWindow }
+  const globalsArrive = (openai: Record<string, unknown>) => {
+    fakeWindow.openai = openai
+    for (const listener of windowListeners.get('openai:set_globals') ?? []) listener({})
+  }
+  const clickCard = () =>
+    elements.root.dispatch('click', { target: target('a[data-href]', { 'data-href': RECIPE_URL }), preventDefault: vi.fn() })
+  return { elements, documentElement, posted, fromHost, requests, answer, settle, fakeWindow, globalsArrive, clickCard }
 }
 
 const RESULT = {
@@ -135,6 +142,7 @@ describe('widget script in a host', () => {
     const click = { target: target('a[data-href]', { 'data-href': RECIPE_URL }), preventDefault: vi.fn() }
     w.elements.root.dispatch('click', click)
     expect(click.preventDefault).toHaveBeenCalled()
+    await w.settle()
     expect(w.requests('ui/open-link').at(-1)).toMatchObject({ params: { url: RECIPE_URL } })
     w.answer('ui/open-link', { isError: true })
     await w.settle()
@@ -154,6 +162,7 @@ describe('widget script in a host', () => {
     expect(w.elements['link-help'].innerHTML).toContain(`<span class="copy-url">${RECIPE_URL}</span>`)
 
     w.elements['link-help'].dispatch('click', { target: target('button[data-retry]', { 'data-retry': RECIPE_URL }) })
+    await vi.advanceTimersByTimeAsync(0)
     expect(w.requests('ui/open-link')).toHaveLength(2)
     w.answer('ui/open-link', {})
     await vi.advanceTimersByTimeAsync(0)
@@ -177,5 +186,71 @@ describe('widget script in a host', () => {
     await w.settle()
     w.elements.root.dispatch('click', { target: target('a[data-href]', { 'data-href': 'https://evil.example/' }), preventDefault: vi.fn() })
     expect(w.requests('ui/open-link')).toHaveLength(0)
+  })
+
+  it('opens with window.open outside a host, even after the initialisation timeout (audit 4, finding 2)', async () => {
+    vi.useFakeTimers()
+    const w = boot({ standalone: true })
+    await vi.advanceTimersByTimeAsync(5_000)
+    w.clickCard()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.fakeWindow.open).toHaveBeenCalledWith(RECIPE_URL, '_blank', 'noopener')
+    expect(w.elements['link-help'].hidden).toBe(true)
+  })
+
+  it('accepts a late initialisation answer (audit 4, finding 2)', async () => {
+    vi.useFakeTimers()
+    const w = boot()
+    await vi.advanceTimersByTimeAsync(5_000)
+    w.answer('ui/initialize', { hostContext: { theme: 'dark' }, hostCapabilities: { openLinks: {} } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.documentElement.getAttribute('data-theme')).toBe('dark')
+    w.clickCard()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.requests('ui/open-link')).toHaveLength(1)
+  })
+
+  it('retries initialisation from "Try again" when it never answered, then opens (audit 4, finding 2)', async () => {
+    vi.useFakeTimers()
+    const w = boot()
+    await vi.advanceTimersByTimeAsync(5_000)
+    w.clickCard()
+    expect(w.requests('ui/initialize')).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(w.elements['link-help'].hidden).toBe(false)
+    expect(w.requests('ui/open-link')).toHaveLength(0)
+
+    w.elements['link-help'].dispatch('click', { target: target('button[data-retry]', { 'data-retry': RECIPE_URL }) })
+    expect(w.requests('ui/initialize')).toHaveLength(3)
+    w.answer('ui/initialize', { hostContext: {}, hostCapabilities: { openLinks: {} } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.requests('ui/open-link')).toHaveLength(1)
+    w.answer('ui/open-link', { isError: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.fakeWindow.open).not.toHaveBeenCalled()
+    expect(w.elements['link-help'].hidden).toBe(true)
+  })
+
+  it('uses openExternal when the ChatGPT globals arrive after boot (audit 4, finding 3)', async () => {
+    const openExternal = vi.fn()
+    const w = boot()
+    w.globalsArrive({ openExternal })
+    w.answer('ui/initialize', { hostContext: {}, hostCapabilities: {} })
+    await w.settle()
+    w.clickCard()
+    await w.settle()
+    expect(openExternal).toHaveBeenCalledWith({ href: RECIPE_URL })
+    expect(w.elements['link-help'].hidden).toBe(true)
+  })
+
+  it('re-selects the opener when the globals arrive after a failed initialisation (audit 4, finding 3)', async () => {
+    vi.useFakeTimers()
+    const openExternal = vi.fn()
+    const w = boot()
+    await vi.advanceTimersByTimeAsync(5_000)
+    w.globalsArrive({ openExternal })
+    w.clickCard()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(openExternal).toHaveBeenCalledWith({ href: RECIPE_URL })
   })
 })

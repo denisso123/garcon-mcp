@@ -70,15 +70,13 @@ function garconView(config) {
     if (items.length < 2) return items.join('');
     return items.slice(0, -1).join(', ') + ' and ' + items[items.length - 1];
   }
-  // components/ui/tag.tsx: the label sits in its own span with 2 px padding.
-  function tag(text, tone, icon) {
-    return '<span class="tag' + (tone ? ' ' + tone : '') + '">' + (icon || '') + '<span class="tag-label">' + esc(text) + '</span></span>';
+  // Source: components/ui/tag.tsx.
+  function tag(text, tone) {
+    return '<span class="tag' + (tone ? ' ' + tone : '') + '"><span class="tag-label">' + esc(text) + '</span></span>';
   }
 
-  // components/garcon/recipe-card.tsx: one link per card. The photo (3:2,
-  // radius 24, elevation e2) carries the Plus badge top left; under it the
-  // name in title 2 medium, the tags row (success tag for "Ready to make",
-  // then the flavour tags) and one quiet note line.
+  // Source: components/garcon/recipe-card.tsx and plus-badge.tsx. A card
+  // with an unsafe URL renders without a link.
   function card(item, images) {
     var id = 'g' + (++nextId);
     var url = safeUrl(item && item.url, RECIPE);
@@ -107,9 +105,8 @@ function garconView(config) {
       ' aria-labelledby="' + id + '-n' + (plus ? ' ' + id + '-p' : '') + '" aria-describedby="' + id + '-d">' + body + '</a></li>';
   }
 
-  // A shelf of cards: a carousel at inline widths, the site's card grid from
-  // 640 px (CSS decides). The arrow pair is the site's stepper (quaternary
-  // xs icon buttons on a surface 2 pill); the list itself takes the keys.
+  // Carousel or grid is decided in CSS; garconCarousel handles the keys and
+  // the arrow pair, which copies the recipe page's servings stepper.
   function section(key, title, items, images, quiet) {
     if (!items || !items.length) return '';
     var arrows = '<span class="stepper" role="group" aria-label="Scroll ' + esc(title.toLowerCase()) + '">' +
@@ -127,7 +124,7 @@ function garconView(config) {
       '<p class="age">' + esc(config.ageNote) + '</p></footer>';
   }
 
-  // RecipeCardSkeleton: the photo block, a title bar and two tags.
+  // Source: RecipeCardSkeleton in components/garcon/recipe-card.tsx.
   function loading() {
     var sk = '<li class="sk-card"><span class="sk sk-photo"></span><span class="body"><span class="sk sk-name"></span>' +
       '<span class="sk-tags"><span class="sk sk-tag"></span><span class="sk sk-tag"></span></span></span></li>';
@@ -279,7 +276,7 @@ function garconLinks(deps) {
     }
     try {
       if (mode === 'openai') {
-        deps.openai.openExternal({ href: url });
+        deps.openai().openExternal({ href: url });
         return Promise.resolve('opened');
       }
       if (mode === 'window') return Promise.resolve(deps.open(url) ? 'opened' : 'failed');
@@ -301,30 +298,46 @@ const BOOT_JS = /* js */ `
   var bridge = window.parent && window.parent !== window;
 
   function send(message) { if (bridge) window.parent.postMessage(message, '*'); }
-  function request(method, params, timeoutMs) {
+  // onLate: what to do with an answer that arrives after the timeout.
+  function request(method, params, timeoutMs, onLate) {
     var id = nextId++;
     send({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
     return new Promise(function (resolve, reject) {
       pending[id] = { resolve: resolve, reject: reject };
-      setTimeout(function () { if (pending[id]) { delete pending[id]; reject(new Error('timeout')); } }, timeoutMs || 4000);
+      setTimeout(function () {
+        if (!pending[id]) return;
+        if (onLate) pending[id] = { resolve: onLate, reject: function () {} };
+        else delete pending[id];
+        reject(new Error('timeout'));
+      }, timeoutMs || 4000);
     });
   }
   function notify(method, params) { send({ jsonrpc: '2.0', method: method, params: params || {} }); }
 
-  // The opener is chosen from what the host negotiated, never by trial:
-  // until ui/initialize answers, only ChatGPT's own API (or a plain page) is known.
+  // The opener is chosen from what the host negotiated, never by trial.
+  // Outside a host it is window.open; inside one, ui/open-link once
+  // ui/initialize lists openLinks, otherwise ChatGPT's openExternal when its
+  // globals are there (they can arrive late), otherwise none.
   function hasOpenExternal() { return Boolean(window.openai && typeof window.openai.openExternal === 'function'); }
-  var linkMode = hasOpenExternal() ? 'openai' : bridge ? 'none' : 'window';
+  var linkMode = !bridge ? 'window' : hasOpenExternal() ? 'openai' : 'none';
+  var initialized = false;
+  var initializing = null;
   var openLink = garconLinks({
     mode: function () { return linkMode; },
     request: request,
-    openai: window.openai,
+    openai: function () { return window.openai; },
     open: function (url) { return window.open(url, '_blank', 'noopener'); }
   });
   var linkHelp = document.getElementById('link-help');
+  // A host that has not answered ui/initialize yet gets asked again before a
+  // link is opened; until it answers there is no opener to use.
+  function ready() {
+    if (!bridge || initialized || linkMode !== 'none') return Promise.resolve();
+    return initializing || initialize();
+  }
   function follow(url) {
     linkHelp.hidden = true;
-    openLink(url).then(function (outcome) {
+    ready().then(function () { return openLink(url); }).then(function (outcome) {
       if (outcome === 'failed') {
         linkHelp.innerHTML = view.linkHelp(url);
         linkHelp.hidden = false;
@@ -442,6 +455,7 @@ const BOOT_JS = /* js */ `
   function fromOpenAiGlobals() {
     var openai = window.openai;
     if (!openai) return;
+    if (linkMode !== 'bridge' && linkMode !== 'window' && hasOpenExternal()) linkMode = 'openai';
     if (openai.theme) applyHostContext({ theme: openai.theme });
     if (openai.toolOutput) {
       show(view.results(openai.toolOutput, openai.toolResponseMetadata, openai.toolInput), false,
@@ -452,18 +466,25 @@ const BOOT_JS = /* js */ `
   show(view.loading(), true);
   fromOpenAiGlobals();
 
-  request('ui/initialize', {
-    appInfo: { name: 'ask-garcon-cocktail-list', version: '1.1.0' },
-    appCapabilities: { availableDisplayModes: ['inline'] },
-    protocolVersion: '2026-01-26'
-  }).then(function (result) {
+  function onInitialized(result) {
     var caps = result && result.hostCapabilities;
     linkMode = caps && caps.openLinks ? 'bridge' : hasOpenExternal() ? 'openai' : 'none';
     applyHostContext(result && result.hostContext);
-    notify('ui/notifications/initialized', {});
-  }, function () {
-    linkMode = hasOpenExternal() ? 'openai' : 'none';
-  });
+    if (!initialized) notify('ui/notifications/initialized', {});
+    initialized = true;
+  }
+  // An answer after the timeout still counts (onLate).
+  function initialize() {
+    initializing = request('ui/initialize', {
+      appInfo: { name: 'ask-garcon-cocktail-list', version: '1.2.0' },
+      appCapabilities: { availableDisplayModes: ['inline'] },
+      protocolVersion: '2026-01-26'
+    }, 4000, onInitialized).then(onInitialized, function () {
+      if (bridge && !initialized) linkMode = hasOpenExternal() ? 'openai' : 'none';
+    }).then(function () { initializing = null; });
+    return initializing;
+  }
+  initialize();
 })();
 `
 
@@ -510,7 +531,6 @@ const WIDGET_CSS = /* css */ `
   p { margin: 0; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-  /* a shelf: heading row, then the cards */
   .shelf { display: grid; gap: var(--space-lg); min-width: 0; }
   .shelf-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-lg); }
   h2 {
@@ -559,7 +579,7 @@ const WIDGET_CSS = /* css */ `
   }
   @media (min-width: 1024px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 
-  /* recipe_card (components/garcon/recipe-card.tsx) */
+  /* components/garcon/recipe-card.tsx */
   .card { display: flex; flex-direction: column; min-width: 0; border-radius: var(--radius-24); color: inherit; text-decoration: none; }
   a.card:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 0; }
   .media {
@@ -582,7 +602,7 @@ const WIDGET_CSS = /* css */ `
   .details:empty { display: none; }
   .tags { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
 
-  /* tags, size xs (components/ui/tag.tsx): secondary, success, and the Plus badge */
+  /* components/ui/tag.tsx, size xs */
   .tag {
     position: relative; display: inline-flex; align-items: center; justify-content: center; max-width: 100%;
     min-height: var(--size-control-xs); padding: var(--space-xxs) var(--space-sm);
@@ -592,7 +612,7 @@ const WIDGET_CSS = /* css */ `
   }
   .tag-label { padding-inline: var(--space-xxs); }
   .tag.ok { background: var(--c-ok-fill); color: var(--c-ok); }
-  /* plus-badge.tsx, onImage: warning tag made opaque over the photo, amber star */
+  /* components/garcon/plus-badge.tsx, onImage */
   .tag.plus { position: absolute; left: var(--space-lg); top: var(--space-lg);
     background: var(--surface-warning-overlay); color: var(--fg-warning-overlay); box-shadow: var(--shadow-e2); }
   .tag.plus .star { flex: none; width: var(--size-icon-xs); height: var(--size-icon-xs); color: var(--surface-warning-high-em); }
@@ -646,7 +666,7 @@ const WIDGET_CSS = /* css */ `
   .retry:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-4); }
   .copy-url { color: var(--c-text); overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
 
-  /* RecipeCardSkeleton: surface 3 blocks, radius 4, pulse only with motion allowed */
+  /* RecipeCardSkeleton and components/ui/skeleton.tsx; the pulse only with motion allowed */
   .skeleton { display: grid; gap: var(--space-lg); }
   .skeleton .cards { overflow: hidden; }
   .sk { display: block; border-radius: var(--radius-4); background: var(--c-fill-strong); }

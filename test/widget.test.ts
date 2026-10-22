@@ -16,7 +16,7 @@ interface View {
 type LinkDeps = {
   mode: () => string
   request: (method: string, params: unknown, timeoutMs?: number) => Promise<unknown>
-  openai?: unknown
+  openai?: () => unknown
   open: (url: string) => unknown
 }
 
@@ -276,7 +276,7 @@ describe('widget links (audit 3, finding 2)', () => {
     const outcome = await factory.garconLinks({
       mode: () => 'bridge',
       request: () => Promise.resolve({ isError: true }),
-      openai: { openExternal },
+      openai: () => ({ openExternal }),
       open,
     })(URL)
     expect(outcome).toBe('refused')
@@ -290,7 +290,7 @@ describe('widget links (audit 3, finding 2)', () => {
     const outcome = await factory.garconLinks({
       mode: () => 'bridge',
       request: () => Promise.reject(new Error('timeout')),
-      openai: { openExternal },
+      openai: () => ({ openExternal }),
       open,
     })(URL)
     expect(outcome).toBe('failed')
@@ -301,7 +301,7 @@ describe('widget links (audit 3, finding 2)', () => {
   it('uses ChatGPT openExternal or window.open only when that is the negotiated opener', async () => {
     const request = vi.fn()
     const openExternal = vi.fn()
-    expect(await factory.garconLinks({ mode: () => 'openai', request, openai: { openExternal }, open: vi.fn() })(URL)).toBe('opened')
+    expect(await factory.garconLinks({ mode: () => 'openai', request, openai: () => ({ openExternal }), open: vi.fn() })(URL)).toBe('opened')
     expect(openExternal).toHaveBeenCalledWith({ href: URL })
     expect(request).not.toHaveBeenCalled()
 

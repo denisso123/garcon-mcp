@@ -136,8 +136,10 @@ const OK = () => Response.json({ success: true, responseObject: { ok: true } })
 describe('deadlines with real timers', () => {
   it('aborts a body that stalls after the headers, then retries (attempt timeout)', async () => {
     const fetches: string[] = []
-    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+    const signals: AbortSignal[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       fetches.push(String(input))
+      if (init?.signal) signals.push(init.signal)
       if (fetches.length === 1) return new Response(new ReadableStream({ start() {} }), { status: 200 })
       return OK()
     })
@@ -145,6 +147,10 @@ describe('deadlines with real timers', () => {
     const value = await upstreamWith({ attemptTimeoutMs: 100 }).get('/stall-once', 60)
     expect(value).toEqual({ ok: true })
     expect(fetches).toHaveLength(2)
+    // The stalled attempt's own signal fired; the successful one did not.
+    expect(signals[0].aborted).toBe(true)
+    expect((signals[0].reason as Error).name).toBe('TimeoutError')
+    expect(signals[1].aborted).toBe(false)
     expect(Date.now() - started).toBeGreaterThanOrEqual(100)
   })
 

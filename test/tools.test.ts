@@ -165,7 +165,11 @@ describe('find_cocktails_by_ingredients', () => {
       (await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['simple syrup', 'lime juice'] })).structuredContent
     )
     expect(out.cocktails.find((c) => c.name === 'One Syrup')).toMatchObject({ have: ['Plain Simple', 'Lime Juice'], can_make_now: true })
-    expect(out.cocktails.find((c) => c.name === 'Two Syrups')).toMatchObject({ missing: ['Plain Simple'], can_make_now: false })
+    expect(out.cocktails.find((c) => c.name === 'Two Syrups')).toMatchObject({
+      have: ['Plain Simple', 'Lime Juice'],
+      missing: ['Rich Simple (2:1) syrup'],
+      can_make_now: false,
+    })
   })
 
   it('counts a repeated ingredient once, so ranking matches the exhaustive order (audit 3, finding 3)', async () => {
