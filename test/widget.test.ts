@@ -10,16 +10,22 @@ interface View {
   error(text: string): string
   cancelled(): string
   summary(result: unknown): string
+  linkHelp(url: string): string
   fromToolResult(result: unknown, args?: unknown): string
 }
-type LinkDeps = { request: (method: string, params: unknown) => Promise<unknown>; openai?: unknown; open: (url: string) => void }
+type LinkDeps = {
+  mode: () => string
+  request: (method: string, params: unknown, timeoutMs?: number) => Promise<unknown>
+  openai?: unknown
+  open: (url: string) => unknown
+}
 
 // The view runs in the host's iframe as plain script; run the same source here.
 const factory = new Function(
   `${VIEW_JS}; return { garconView: garconView, garconLinks: garconLinks, garconCarousel: garconCarousel }`
 )() as {
   garconView(config: ViewConfig): View
-  garconLinks(deps: LinkDeps): (url: string) => Promise<void>
+  garconLinks(deps: LinkDeps): (url: string) => Promise<'opened' | 'refused' | 'failed'>
   garconCarousel(scroller: FakeScroller, smooth: boolean): Carousel
 }
 
@@ -253,25 +259,62 @@ describe('widget view', () => {
   })
 })
 
-describe('widget links', () => {
-  it('opens through ui/open-link when the host accepts it', async () => {
+describe('widget links (audit 3, finding 2)', () => {
+  const URL = RICKEY.url
+
+  it('opens through ui/open-link when the host negotiated it', async () => {
     const request = vi.fn().mockResolvedValue({})
     const open = vi.fn()
-    await factory.garconLinks({ request, open })(RICKEY.url)
-    expect(request).toHaveBeenCalledWith('ui/open-link', { url: RICKEY.url })
+    expect(await factory.garconLinks({ mode: () => 'bridge', request, open })(URL)).toBe('opened')
+    expect(request).toHaveBeenCalledWith('ui/open-link', { url: URL }, 15000)
     expect(open).not.toHaveBeenCalled()
   })
 
-  it('falls back to ChatGPT openExternal, then window.open, when the host refuses or times out', async () => {
+  it('treats a refusal or cancellation as final: nothing else opens the link', async () => {
     const openExternal = vi.fn()
-    await factory.garconLinks({ request: () => Promise.reject(new Error('timeout')), openai: { openExternal }, open: vi.fn() })(
-      RICKEY.url
-    )
-    expect(openExternal).toHaveBeenCalledWith({ href: RICKEY.url })
-
     const open = vi.fn()
-    await factory.garconLinks({ request: () => Promise.resolve({ isError: true }), open })(RICKEY.url)
-    expect(open).toHaveBeenCalledWith(RICKEY.url)
+    const outcome = await factory.garconLinks({
+      mode: () => 'bridge',
+      request: () => Promise.resolve({ isError: true }),
+      openai: { openExternal },
+      open,
+    })(URL)
+    expect(outcome).toBe('refused')
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('never opens on its own after a timeout; it reports a failure for the retry and copy offer', async () => {
+    const openExternal = vi.fn()
+    const open = vi.fn()
+    const outcome = await factory.garconLinks({
+      mode: () => 'bridge',
+      request: () => Promise.reject(new Error('timeout')),
+      openai: { openExternal },
+      open,
+    })(URL)
+    expect(outcome).toBe('failed')
+    expect(openExternal).not.toHaveBeenCalled()
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('uses ChatGPT openExternal or window.open only when that is the negotiated opener', async () => {
+    const request = vi.fn()
+    const openExternal = vi.fn()
+    expect(await factory.garconLinks({ mode: () => 'openai', request, openai: { openExternal }, open: vi.fn() })(URL)).toBe('opened')
+    expect(openExternal).toHaveBeenCalledWith({ href: URL })
+    expect(request).not.toHaveBeenCalled()
+
+    const open = vi.fn().mockReturnValue(null)
+    expect(await factory.garconLinks({ mode: () => 'window', request, open })(URL)).toBe('failed')
+    expect(await factory.garconLinks({ mode: () => 'none', request, open })(URL)).toBe('failed')
+    expect(request).not.toHaveBeenCalled()
+  })
+
+  it('offers a retry button and the URL to copy', () => {
+    const help = view().linkHelp(URL)
+    expect(help).toContain(`<button type="button" class="retry" data-retry="${URL}">Try again</button>`)
+    expect(help).toContain(`<span class="copy-url">${URL}</span>`)
   })
 })
 

@@ -26,7 +26,7 @@ import {
 import { AGE_NOTE, BY_INGREDIENTS_TOOL_URL, MCP_ORIGIN } from './site'
 
 // Bump the version in the URI on any breaking change: hosts cache by URI.
-export const WIDGET_URI = 'ui://ask-garcon/cocktail-list-v1.html'
+export const WIDGET_URI = 'ui://ask-garcon/cocktail-list-v2.html'
 
 export interface WidgetOptions {
   /** Load DM Sans and Inter from `assetOrigin`. Off for ChatGPT, whose guidelines ask for system fonts. */
@@ -166,6 +166,11 @@ function garconView(config) {
       esc(text || 'Something went wrong. Try again in a moment.') + '</p></div>' + footer();
   }
 
+  function linkHelp(url) {
+    return 'Couldn’t open the page. <button type="button" class="retry" data-retry="' + esc(url) + '">Try again</button> or copy the link: ' +
+      '<span class="copy-url">' + esc(url) + '</span>';
+  }
+
   function cancelled() {
     return '<p class="lead">Search cancelled.</p>';
   }
@@ -194,6 +199,7 @@ function garconView(config) {
     error: error,
     cancelled: cancelled,
     summary: summary,
+    linkHelp: linkHelp,
     fromToolResult: fromToolResult
   };
 }
@@ -257,16 +263,30 @@ function garconCarousel(scroller, smooth) {
   return { step: step, onKey: onKey, state: state };
 }
 
+// Opens a link with the opener the host negotiated (deps.mode): the MCP Apps
+// ui/open-link request, ChatGPT's openExternal, or window.open outside a
+// host. A refusal or a cancelled confirmation is final. A request that gets
+// no answer is not retried behind the person's back: the caller offers a
+// retry button and the URL to copy. Resolves 'opened', 'refused' or 'failed'.
 function garconLinks(deps) {
-  function fallback(url) {
-    if (deps.openai && typeof deps.openai.openExternal === 'function') deps.openai.openExternal({ href: url });
-    else deps.open(url);
-  }
   return function openLink(url) {
-    if (!url) return Promise.resolve();
-    return deps.request('ui/open-link', { url: url }).then(function (result) {
-      if (result && result.isError) fallback(url);
-    }, function () { fallback(url); });
+    if (!url) return Promise.resolve('failed');
+    var mode = deps.mode();
+    if (mode === 'bridge') {
+      return deps.request('ui/open-link', { url: url }, 15000).then(function (result) {
+        return result && result.isError ? 'refused' : 'opened';
+      }, function () { return 'failed'; });
+    }
+    try {
+      if (mode === 'openai') {
+        deps.openai.openExternal({ href: url });
+        return Promise.resolve('opened');
+      }
+      if (mode === 'window') return Promise.resolve(deps.open(url) ? 'opened' : 'failed');
+    } catch (error) {
+      return Promise.resolve('failed');
+    }
+    return Promise.resolve('failed');
   };
 }
 `
@@ -281,20 +301,40 @@ const BOOT_JS = /* js */ `
   var bridge = window.parent && window.parent !== window;
 
   function send(message) { if (bridge) window.parent.postMessage(message, '*'); }
-  function request(method, params) {
+  function request(method, params, timeoutMs) {
     var id = nextId++;
     send({ jsonrpc: '2.0', id: id, method: method, params: params || {} });
     return new Promise(function (resolve, reject) {
       pending[id] = { resolve: resolve, reject: reject };
-      setTimeout(function () { if (pending[id]) { delete pending[id]; reject(new Error('timeout')); } }, 4000);
+      setTimeout(function () { if (pending[id]) { delete pending[id]; reject(new Error('timeout')); } }, timeoutMs || 4000);
     });
   }
   function notify(method, params) { send({ jsonrpc: '2.0', method: method, params: params || {} }); }
 
+  // The opener is chosen from what the host negotiated, never by trial:
+  // until ui/initialize answers, only ChatGPT's own API (or a plain page) is known.
+  function hasOpenExternal() { return Boolean(window.openai && typeof window.openai.openExternal === 'function'); }
+  var linkMode = hasOpenExternal() ? 'openai' : bridge ? 'none' : 'window';
   var openLink = garconLinks({
+    mode: function () { return linkMode; },
     request: request,
     openai: window.openai,
-    open: function (url) { window.open(url, '_blank', 'noopener'); }
+    open: function (url) { return window.open(url, '_blank', 'noopener'); }
+  });
+  var linkHelp = document.getElementById('link-help');
+  function follow(url) {
+    linkHelp.hidden = true;
+    openLink(url).then(function (outcome) {
+      if (outcome === 'failed') {
+        linkHelp.innerHTML = view.linkHelp(url);
+        linkHelp.hidden = false;
+      }
+      reportSize();
+    });
+  }
+  linkHelp.addEventListener('click', function (event) {
+    var button = event.target.closest && event.target.closest('button[data-retry]');
+    if (button && view.isRecipeUrl(button.getAttribute('data-retry'))) follow(button.getAttribute('data-retry'));
   });
 
   var live = document.getElementById('live');
@@ -354,7 +394,7 @@ const BOOT_JS = /* js */ `
     if (!link) return;
     event.preventDefault();
     var url = link.getAttribute('data-href');
-    if (view.isRecipeUrl(url)) openLink(url);
+    if (view.isRecipeUrl(url)) follow(url);
   });
   // A recipe photo that fails to load falls back to the card's placeholder.
   root.addEventListener('error', function (event) {
@@ -417,9 +457,13 @@ const BOOT_JS = /* js */ `
     appCapabilities: { availableDisplayModes: ['inline'] },
     protocolVersion: '2026-01-26'
   }).then(function (result) {
+    var caps = result && result.hostCapabilities;
+    linkMode = caps && caps.openLinks ? 'bridge' : hasOpenExternal() ? 'openai' : 'none';
     applyHostContext(result && result.hostContext);
     notify('ui/notifications/initialized', {});
-  }, function () {});
+  }, function () {
+    linkMode = hasOpenExternal() ? 'openai' : 'none';
+  });
 })();
 `
 
@@ -591,6 +635,17 @@ const WIDGET_CSS = /* css */ `
   .more:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 0; }
   .age { color: var(--c-faint); }
 
+  /* the page could not be opened: a retry and the URL to copy */
+  .link-help {
+    margin: 0 calc(var(--space-xxl) + var(--safe-right, 0px)) calc(var(--space-lg) + var(--safe-bottom, 0px)) calc(var(--space-xxl) + var(--safe-left, 0px));
+    font-size: var(--text-caption-2); line-height: var(--leading-caption-2); letter-spacing: var(--tracking-caption-2); color: var(--c-muted);
+  }
+  .link-help[hidden] { display: none; }
+  .retry { padding: 0; border: 0; background: none; font: inherit; font-weight: 500; color: var(--c-link); cursor: pointer;
+    text-decoration: underline; text-decoration-color: var(--c-link-line); text-underline-offset: 4px; }
+  .retry:focus-visible { outline: var(--focus-ring-width) solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-4); }
+  .copy-url { color: var(--c-text); overflow-wrap: anywhere; user-select: all; -webkit-user-select: all; }
+
   /* RecipeCardSkeleton: surface 3 blocks, radius 4, pulse only with motion allowed */
   .skeleton { display: grid; gap: var(--space-lg); }
   .skeleton .cards { overflow: hidden; }
@@ -642,6 +697,7 @@ ${WIDGET_CSS}</style>
 <body>
 <p id="live" class="sr" role="status"></p>
 <main id="root" aria-busy="true"></main>
+<p id="link-help" class="link-help" role="status" hidden></p>
 <script>
 var CONFIG = ${JSON.stringify(config).replace(/</g, '\\u003c')};
 ${VIEW_JS}
@@ -650,6 +706,3 @@ ${BOOT_JS}
 </body>
 </html>`
 }
-
-/** The widget with brand fonts, as Claude and other MCP Apps hosts receive it. */
-export const WIDGET_HTML = widgetHtml({ brandFonts: true })

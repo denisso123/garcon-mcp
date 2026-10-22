@@ -146,6 +146,43 @@ describe('find_cocktails_by_ingredients', () => {
     expect(out.bar.recognised[0]).toEqual({ you_said: 'vermouth', matched_as: [], could_be: ['Sweet vermouth', 'Dry vermouth'] })
   })
 
+  it('never counts one scotch as two different scotches (audit 3, finding 1)', async () => {
+    const both = recipe('two-scotches', ['Blended scotch whisky', 'Single malt scotch whisky', 'Lemon Juice'])
+    const h = setup(new FakeApi({ recipes: [both], matches: { readyToMake: [preview(both)] } }), worker)
+    const out = findOutput.parse(
+      (await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['scotch', 'lemon juice'] })).structuredContent
+    )
+    expect(out.cocktails[0]).toMatchObject({ have: ['Lemon Juice'], can_make_now: false })
+    expect(out.cocktails[0].depends_on).toHaveLength(1)
+    expect(out.cocktails[0].missing).toHaveLength(1)
+  })
+
+  it('lets one bottle of simple syrup stand in for either syrup, but only once per recipe (audit 3, finding 1)', async () => {
+    const both = recipe('two-syrups', ['Rich Simple (2:1) syrup', 'Plain Simple', 'Lime Juice'])
+    const one = recipe('one-syrup', ['Plain Simple', 'Lime Juice'])
+    const h = setup(new FakeApi({ recipes: [both, one], matches: { readyToMake: [preview(both), preview(one)] } }), worker)
+    const out = findOutput.parse(
+      (await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['simple syrup', 'lime juice'] })).structuredContent
+    )
+    expect(out.cocktails.find((c) => c.name === 'One Syrup')).toMatchObject({ have: ['Plain Simple', 'Lime Juice'], can_make_now: true })
+    expect(out.cocktails.find((c) => c.name === 'Two Syrups')).toMatchObject({ missing: ['Plain Simple'], can_make_now: false })
+  })
+
+  it('counts a repeated ingredient once, so ranking matches the exhaustive order (audit 3, finding 3)', async () => {
+    const small = Array.from({ length: 8 }, (_, i) => recipe(`small-${i}`, ['Vodka', 'Chilled water', 'Saline solution 4:1']))
+    const doubled = recipe('double-vodka', ['Vodka', 'Vodka'])
+    const h = setup(
+      new FakeApi({ recipes: [...small, doubled], matches: { readyToMake: [...small, doubled].map((item) => preview(item)) } }),
+      worker
+    )
+    const out = findOutput.parse(
+      (await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['vodka'], limit: 1 })).structuredContent
+    )
+    expect(names(out.cocktails)).toEqual(['Small 0'])
+    expect(out.cocktails[0].have).toEqual(['Vodka'])
+    expect(out.partial).toBeUndefined()
+  })
+
   it('stops comparing once later groups cannot beat the drinks already found', async () => {
     const ready = Array.from({ length: 6 }, (_, i) => recipe(`ready-${i}`, ['Vodka', 'Soda Water']))
     const almost = Array.from({ length: 20 }, (_, i) => recipe(`almost-${i}`, ['Vodka', `A${i}`, `B${i}`]))

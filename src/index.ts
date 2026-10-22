@@ -35,17 +35,22 @@ const MAX_BODY_BYTES = 64 * 1024
 
 // Origin policy (MCP Streamable HTTP: servers must validate Origin,
 // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
-// ChatGPT and Claude call this server from their own backends, so their
-// requests carry no Origin: "Claude connects to your remote MCP server from
-// Anthropic's cloud infrastructure" (https://support.claude.com/en/articles/11175166),
-// and ChatGPT apps and connectors call from OpenAI's published egress ranges
-// (https://developers.openai.com/api/docs/guides/ip-addresses). A request
-// without Origin passes. Browser origins are refused except localhost, for
-// the MCP Inspector and the widget harness during development; the widget
-// itself never calls the server (its CSP has no connect domains).
+// A request without Origin passes; browser origins are refused except
+// localhost, for the MCP Inspector and the widget harness during development.
+// The widget never calls the server itself (its CSP has no connect domains).
+// Why this should suit ChatGPT and Claude: both call remote MCP servers from
+// their own infrastructure, not from the user's browser ("Claude connects to
+// your remote MCP server from Anthropic's cloud infrastructure",
+// https://support.claude.com/en/articles/11175166; ChatGPT apps and
+// connectors call from OpenAI's egress ranges,
+// https://developers.openai.com/api/docs/guides/ip-addresses). Neither
+// document says which headers those requests carry, so the absence of an
+// Origin header is an inference, not a documented guarantee. Capturing real
+// host requests is a pre-launch check in SUBMISSION.md.
 const ALLOWED_ORIGINS = localhostAllowedOrigins()
 
-// The server is public, read-only and uses no cookies, so any origin may call it.
+// CORS stays open: the server is public, read-only and uses no cookies. Which
+// browser origins may call it at all is decided by the Origin check above.
 const CORS_HEADERS: Record<string, string> = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'POST, OPTIONS',

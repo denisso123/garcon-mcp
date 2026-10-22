@@ -173,6 +173,9 @@ export class Upstream {
    * optional lookup can fail without taking the main answer with it.
    */
   private load<T>(what: string, ttlSeconds: number, fetchValue: () => Promise<T | null>) {
+    // The deadline covers fast paths too: a memory hit or a lookup that
+    // already settled must not answer a call that has run out of time.
+    if (Date.now() >= this.deadline) return Promise.reject(new UpstreamError(TOO_SLOW))
     const key = `${CACHE_SCHEMA} ${this.baseUrl} ${what}`
     let pending = this.inflight.get(key)
     if (!pending) {

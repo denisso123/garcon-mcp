@@ -198,4 +198,20 @@ describe('deadlines with real timers', () => {
     }
     expect(await upstreamWith({ cache }).get('/sync-throw', 60)).toEqual({ ok: true })
   })
+
+  it('refuses a memory-cache hit once the call deadline has passed (audit 3, finding 4)', async () => {
+    vi.stubGlobal('fetch', OK)
+    await upstreamWith({ deadlineMs: 5_000 }).get('/warm-memory', 60)
+    const late = upstreamWith({ deadlineMs: 30 })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    await expect(late.get('/warm-memory', 60)).rejects.toThrow(/too slow/)
+  })
+
+  it('refuses an already settled lookup once the call deadline has passed (audit 3, finding 4)', async () => {
+    vi.stubGlobal('fetch', OK)
+    const up = upstreamWith({ deadlineMs: 100 })
+    expect(await up.get('/settled-once', 60)).toEqual({ ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 140))
+    await expect(up.get('/settled-once', 60)).rejects.toThrow(/too slow/)
+  })
 })

@@ -32,6 +32,10 @@ const resolvedTerm = z.object({
     .array(z.string())
     .optional()
     .describe('One bottle that may be any of these; a recipe that needs one shows it under depends_on, never under have'),
+  single_bottle: z
+    .literal(true)
+    .optional()
+    .describe('matched_as are substitutes from one bottle: it covers at most one of them in a recipe'),
 })
 
 export const findOutput = z.object({

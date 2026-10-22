@@ -81,6 +81,25 @@ describe('ingredient resolution', () => {
     expect(resolveAlias('constructor')).toBeNull()
   })
 
+  it('sorts every multi-name alias into synonyms, one-bottle substitutes or unknown kinds (audit 3, finding 1)', () => {
+    // Unknown kind: one bottle, and the word does not say which. Conditional only.
+    for (const word of ['vermouth', 'whiskey', 'whisky', 'tequila', 'scotch', 'scotch whisky', 'orange liqueur', 'rum']) {
+      expect(resolveAlias(word)?.could_be?.length, word).toBeGreaterThan(1)
+    }
+    expect(resolveAlias('scotch')).toEqual({ you_said: 'scotch', matched_as: [], could_be: ['Blended scotch whisky', 'Single malt scotch whisky'] })
+    expect(resolveAlias('orange liqueur')).toEqual({ you_said: 'orange liqueur', matched_as: [], could_be: ['Triple sec', 'Cognac orange liqueur'] })
+    // Substitutes: one bottle that does the job of any of them, once per recipe.
+    for (const word of ['simple syrup', 'sugar syrup', 'cream', 'heavy cream']) {
+      expect(resolveAlias(word), word).toMatchObject({ single_bottle: true })
+      expect(resolveAlias(word)?.could_be, word).toBeUndefined()
+    }
+    // Synonyms and forms: the same thing under two catalogue names, or one bag of limes.
+    for (const word of ['gin', 'white rum', 'dark rum', 'limes', 'lemons', 'sugar', 'honey', 'bitters', 'coffee']) {
+      expect(resolveAlias(word)?.single_bottle, word).toBeUndefined()
+      expect(resolveAlias(word)?.could_be, word).toBeUndefined()
+    }
+  })
+
   it('picks near matches from search results and skips look-alikes', () => {
     const options = searchGin as RawIngredientOption[]
     // Two names tie for "gin", so neither is assumed; a clear winner is.

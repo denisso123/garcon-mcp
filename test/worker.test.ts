@@ -5,7 +5,7 @@ import { bourbonBar } from './data'
 import { type Era, FakeApi, type Route, call, connect, fakeLimiter, post, rpcBody, setup } from './harness'
 import { vi } from 'vitest'
 
-const WIDGET_URI = 'ui://ask-garcon/cocktail-list-v1.html'
+const WIDGET_URI = 'ui://ask-garcon/cocktail-list-v2.html' // audit 3, finding 5
 
 afterEach(() => {
   vi.unstubAllGlobals()

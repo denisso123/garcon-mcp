@@ -107,7 +107,7 @@ for (const route of ['/mcp', '/chatgpt/mcp']) {
     const { tools } = await client.listTools()
     log(`- tools/list: ${tools.map((t) => t.name).join(', ')}`)
     if (tools.length !== 4) fail(where, `expected 4 tools, got ${tools.length}`)
-    const { contents } = await client.readResource({ uri: 'ui://ask-garcon/cocktail-list-v1.html' })
+    const { contents } = await client.readResource({ uri: 'ui://ask-garcon/cocktail-list-v2.html' })
     const domain = contents[0]._meta?.ui?.domain
     log(`- widget: ${contents[0].mimeType}, ui.domain ${domain ?? 'none'}`)
     if ((route === '/chatgpt/mcp') !== Boolean(domain)) fail(where, `unexpected ui.domain ${domain}`)

@@ -115,7 +115,16 @@ const GARNISH_GROUP = normalize('Garnishes & Decorative Elements')
 
 /** The catalogue names a bar definitely owns. */
 export function definiteNames(bar: readonly ResolvedTerm[]) {
-  return new Set(bar.flatMap((term) => term.matched_as.map(normalize)))
+  return new Set(bar.filter((term) => !term.single_bottle).flatMap((term) => term.matched_as.map(normalize)))
+}
+
+/**
+ * The most distinct required ingredients a bar can own in one recipe: every
+ * definite name once, plus one per one-bottle substitute. Ownership counts
+ * distinct names (compareWithBar dedupes), so this bounds `have`.
+ */
+export function haveCeiling(bar: readonly ResolvedTerm[]) {
+  return definiteNames(bar).size + bar.filter((term) => term.single_bottle).length
 }
 
 /**
@@ -128,16 +137,26 @@ export function definiteNames(bar: readonly ResolvedTerm[]) {
  */
 export function compareWithBar(recipe: RawRecipe, bar: readonly ResolvedTerm[]): BarComparison {
   const definite = definiteNames(bar)
+  const substitutes = bar.filter((term) => term.single_bottle).map((term) => new Set(term.matched_as.map(normalize)))
   const bottles = bar
     .filter((term) => term.could_be?.length)
     .map((term) => ({ you_said: term.you_said, names: new Set((term.could_be ?? []).map(normalize)) }))
-  const anyTerm = new Set([...definite, ...bottles.flatMap((bottle) => [...bottle.names])])
+  const anyTerm = new Set([
+    ...definite,
+    ...substitutes.flatMap((names) => [...names]),
+    ...bottles.flatMap((bottle) => [...bottle.names]),
+  ])
 
+  // Each distinct ingredient once: ownership and ranking count names, not
+  // rows (quantities stay with the recipe itself).
   const required: string[] = []
   const missingGarnish: string[] = []
+  const seen = new Set<string>()
   for (const entry of recipe.ingredients ?? []) {
     const name = entry.ingredient?.name
     if (!name || entry.optional || isStaple(name)) continue
+    if (seen.has(normalize(name))) continue
+    seen.add(normalize(name))
     if (normalize(entry.ingredient.groupCategory ?? '') === GARNISH_GROUP) {
       if (!anyTerm.has(normalize(name))) missingGarnish.push(name)
     } else {
@@ -146,6 +165,11 @@ export function compareWithBar(recipe: RawRecipe, bar: readonly ResolvedTerm[]):
   }
 
   const covered = required.map((name) => definite.has(normalize(name)))
+  // One-bottle substitutes first: owned, but each covers one ingredient.
+  const unowned = required.flatMap((_, index) => (covered[index] ? [] : [index]))
+  assignBottles(unowned.map((index) => normalize(required[index])), substitutes).forEach((slot) => {
+    if (slot !== -1) covered[unowned[slot]] = true
+  })
   const open = required.flatMap((_, index) => (covered[index] ? [] : [index]))
   const holders = assignBottles(
     open.map((index) => normalize(required[index])),

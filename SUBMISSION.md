@@ -16,6 +16,10 @@ Steps for Denis, in order: deploy, test in both hosts, submit to ChatGPT, submit
 | 7 | **Dofollow links are not verified.** Neither directory documents whether the website link on a listing is followed. | Info | After publishing, check the listing HTML for `rel="nofollow"` on the fixmeadrinkapp.com link. |
 | 8 | **Catalogue gaps.** No plain "Negroni", "Mojito" or "Margarita" in the catalogue, and the Margarita match is premium. Reviewers often try these. | Low | The tool says when the match is not exact and offers free alternatives. Test cases use drinks with free recipes. |
 
+## Pre-launch check: Origin headers from the real hosts
+
+The Worker answers 403 to any request whose `Origin` header is not localhost (`src/index.ts`). Anthropic and OpenAI document that their hosts call MCP servers from their own infrastructure, but neither documents the request headers, so "no Origin header" is an inference. After deploying and before submitting, connect the server in ChatGPT (developer mode) and in Claude (custom connector), run one tool call in each, and check in Cloudflare (Workers → garcon-mcp → Logs) that the calls return 200, not 403. If either host sends an `Origin`, add its hostname to `ALLOWED_ORIGINS` in `src/index.ts` and redeploy.
+
 ## A. Deploy
 
 Prerequisites: access to the Cloudflare account that holds the `fixmeadrinkapp.com` zone (it does: nameservers are `jade` and `odin.ns.cloudflare.com`), and no existing DNS record named `mcp`.
@@ -23,7 +27,7 @@ Prerequisites: access to the Cloudflare account that holds the `fixmeadrinkapp.c
 ```bash
 cd /Users/denisso/Documents/work/blankpage/fixmeadrink/garcon-mcp
 pnpm install
-pnpm test                 # expect 111 passed
+pnpm test                 # expect 128 passed
 pnpm typecheck
 npx wrangler login        # browser sign-in to the Cloudflare account with the zone
 npx wrangler deploy
@@ -180,6 +184,6 @@ After submitting: Anthropic scans automatically and by default lists it as a Com
 
 ## D. After publishing
 
-- Tool changes: OpenAI rescans daily and reviews changed tools on its own; Claude picks up server changes live. Keep input schemas backward compatible, and bump the widget URI (`ui://ask-garcon/cocktail-list-v2.html`) on breaking UI changes.
+- Tool changes: OpenAI rescans daily and reviews changed tools on its own; Claude picks up server changes live. Keep input schemas backward compatible, and bump the widget URI (now `ui://ask-garcon/cocktail-list-v2.html`; next `-v3`) on breaking UI changes.
 - The MCP origin `https://mcp.fixmeadrinkapp.com` cannot change on OpenAI without a new submission. The path can.
 - Before any press about the launch, OpenAI asks you to contact press@openai.com.

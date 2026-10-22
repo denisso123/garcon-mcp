@@ -65,7 +65,7 @@ function withHostCsp(html, csp) {
 const log = []
 window.harnessLog = log
 ;(async () => {
-  const res = await rpc('resources/read', { uri: 'ui://ask-garcon/cocktail-list-v1.html' })
+  const res = await rpc('resources/read', { uri: 'ui://ask-garcon/cocktail-list-v2.html' })
   const content = res.contents[0]
   const defaultBar = scenario === 'lowproof' ? 'aperol,prosecco,soda water,orange juice,lime' : 'gin,limes,simple syrup,soda water'
   const bar = scenario === 'error' ? [' , '] : scenario === 'empty' ? ['xyzzy'] : (params.get('bar') || defaultBar).split(',')

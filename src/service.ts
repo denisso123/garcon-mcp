@@ -22,7 +22,7 @@ import {
   bestMatches,
   candidatesFromGroups,
   compareWithBar,
-  definiteNames,
+  haveCeiling,
   isLowProof,
   matchesFlavors,
   rankMatches,
@@ -257,15 +257,15 @@ export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolO
   const groups =
     (await up.post<RawMatchGroups>('/cocktails/matches', { ingredients: apiBar }, HOUR)) ?? {}
   const compare = (batch: readonly GroupCandidate[]) => compareCandidates(up, batch, recognised)
-  // No recipe can own more of the bar than the bar has catalogue names.
-  const haveCeiling = definiteNames(recognised).size
+  // No recipe can own more distinct ingredients than the bar can cover.
+  const ceiling = haveCeiling(recognised)
 
   const main = await bestMatches(
     candidatesFromGroups(groups, { strength: args.strength, flavors: args.flavors }),
     limit,
     MAX_CHECKED,
     compare,
-    haveCeiling
+    ceiling
   )
   let cocktails = main.matches
   if (!main.complete) output.partial = true
@@ -287,7 +287,7 @@ export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolO
         LOW_PROOF_SHOWN,
         MAX_CHECKED_LOW_PROOF,
         compare,
-        haveCeiling
+        ceiling
       )
       lowProof = low.matches
       if (!low.complete) output.partial = true
@@ -326,7 +326,7 @@ function cardLine(card: MatchCard) {
 }
 
 function termLine(item: ResolvedTerm) {
-  const definite = item.matched_as.join(' / ')
+  const definite = item.matched_as.join(item.single_bottle ? ' or ' : ' / ')
   const vague = item.could_be?.length ? `one bottle of ${item.could_be.join(' or ')} (not assumed)` : ''
   return `${item.you_said} -> ${[definite, vague].filter(Boolean).join(', or ')}`
 }

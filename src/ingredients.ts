@@ -12,8 +12,12 @@ import type { ResolvedTerm } from './schemas'
 import { NO_MATCH, normalize, rankByName } from './text'
 
 // Each alias maps to catalogue names, most common first. Several names are
-// interchangeable forms of what the word means ("gin" is London dry or dry
-// gin; "limes" give lime juice and a wedge), so the bar owns all of them.
+// the same thing under two catalogue names ("gin": London dry or dry gin;
+// "white rum": light rum or rum; "bitters": Angostura or aromatic bitters)
+// or forms one purchase gives ("limes": juice and a wedge; "sugar", "honey"
+// and "coffee": the syrups or brews made from them), so the bar owns all of
+// them. Exceptions: SUBSTITUTES below, and ONE_BOTTLE for words whose kind is
+// unknown. Every multi-name word belongs to exactly one of these groups.
 const ALIASES = new Map<string, readonly string[]>(
   Object.entries({
     gin: ['London dry gin', 'Dry gin'],
@@ -36,8 +40,6 @@ const ALIASES = new Map<string, readonly string[]>(
     bourbon: ['Bourbon whiskey'],
     rye: ['Rye whiskey'],
     'rye whiskey': ['Rye whiskey'],
-    scotch: ['Blended scotch whisky', 'Single malt scotch whisky'],
-    'scotch whisky': ['Blended scotch whisky', 'Single malt scotch whisky'],
     'irish whiskey': ['Irish whiskey'],
     brandy: ['Cognac'],
     cognac: ['Cognac'],
@@ -80,7 +82,6 @@ const ALIASES = new Map<string, readonly string[]>(
     'dry vermouth': ['Dry vermouth'],
     'triple sec': ['Triple sec'],
     cointreau: ['Triple sec'],
-    'orange liqueur': ['Triple sec', 'Cognac orange liqueur'],
     'grand marnier': ['Cognac orange liqueur'],
     curacao: ['Orange Curacao'],
     'blue curacao': ['Blue Curacao'],
@@ -141,8 +142,16 @@ const ONE_BOTTLE = new Map<string, { readonly names: readonly string[]; readonly
     whiskey: { names: [], oneOf: ['Bourbon whiskey', 'Rye whiskey'] },
     whisky: { names: [], oneOf: ['Blended scotch whisky', 'Bourbon whiskey'] },
     vermouth: { names: [], oneOf: ['Sweet vermouth', 'Dry vermouth'] },
+    scotch: { names: [], oneOf: ['Blended scotch whisky', 'Single malt scotch whisky'] },
+    'scotch whisky': { names: [], oneOf: ['Blended scotch whisky', 'Single malt scotch whisky'] },
+    'orange liqueur': { names: [], oneOf: ['Triple sec', 'Cognac orange liqueur'] },
   })
 )
+
+// Words for one bottle that does the job of any of its names, so it is owned,
+// but only once per recipe: one bottle of simple syrup is rich or plain, so
+// a recipe asking for both still misses one.
+const SUBSTITUTES = new Set(['simple syrup', 'sugar syrup', 'cream', 'heavy cream'])
 
 // Things every kitchen has. They are added to every bar and never reported
 // as missing; the result says they were assumed.
@@ -167,9 +176,15 @@ function isKnownWord(term: string) {
   return Boolean(lookup(ALIASES, term) ?? lookup(ONE_BOTTLE, term))
 }
 
-function resolved(term: string, names: readonly string[], couldBe: readonly string[] = []): ResolvedTerm {
+function resolved(
+  term: string,
+  names: readonly string[],
+  couldBe: readonly string[] = [],
+  singleBottle = false
+): ResolvedTerm {
   const result: ResolvedTerm = { you_said: term, matched_as: [...names] }
   if (couldBe.length) result.could_be = [...couldBe]
+  if (singleBottle && names.length > 1) result.single_bottle = true
   return result
 }
 
@@ -178,7 +193,9 @@ export function resolveAlias(term: string): ResolvedTerm | null {
   const bottle = lookup(ONE_BOTTLE, term)
   if (bottle) return resolved(term, bottle.names, bottle.oneOf)
   const names = lookup(ALIASES, term)
-  return names ? resolved(term, names) : null
+  if (!names) return null
+  const key = aliasKey(term)
+  return resolved(term, names, [], SUBSTITUTES.has(key) || SUBSTITUTES.has(key.replace(/s$/, '')))
 }
 
 /**

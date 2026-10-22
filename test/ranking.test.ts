@@ -89,6 +89,22 @@ describe('compareWithBar', () => {
     expect(result.missingGarnish).toEqual(['Lime wedge'])
   })
 
+  it('lists a repeated required ingredient once (audit 3, finding 3)', () => {
+    expect(compareWithBar(recipe('r', ['Vodka', 'vodka', 'Lime Juice']), [term(['Vodka'])])).toMatchObject({
+      have: ['Vodka'],
+      missing: ['Lime Juice'],
+    })
+  })
+
+  it('lets a one-bottle substitute cover one ingredient, definitely', () => {
+    const syrup: ResolvedTerm = { you_said: 'simple syrup', matched_as: ['Rich Simple (2:1) syrup', 'Plain Simple'], single_bottle: true }
+    expect(compareWithBar(recipe('r', ['Rich Simple (2:1) syrup', 'Plain Simple']), [syrup])).toMatchObject({
+      have: ['Rich Simple (2:1) syrup'],
+      missing: ['Plain Simple'],
+      dependsOn: [],
+    })
+  })
+
   it('compares names without case or accent differences', () => {
     expect(compareWithBar(recipe('r', ['Bénédictine']), [term(['benedictine'])]).have).toEqual(['Bénédictine'])
   })
@@ -155,19 +171,45 @@ describe('bestMatches', () => {
     expect(complete).toBe(true)
   })
 
-  it('keeps comparing when an unchecked candidate could own more of the bar', async () => {
+  it('keeps comparing across the batch boundary when an unchecked candidate could own more of the bar', async () => {
     const checked: string[] = []
-    const list = candidates([0, 0, 0, 0])
+    // Ten complete candidates; only the tenth, in the second batch, owns both bar names.
+    const list = candidates(Array.from({ length: 10 }, () => 0))
     const compare = async (batch: readonly GroupCandidate[]) => {
       checked.push(...ids([...batch]))
-      return batch.map((candidate) => ({ ...match(candidate.preview.id, candidate.preview.id === 'c3' ? 2 : 1, 0, candidate.order), candidate }))
+      return batch.map((candidate) => ({ ...match(candidate.preview.id, candidate.preview.id === 'c9' ? 2 : 1, 0, candidate.order), candidate }))
     }
-    const { matches } = await bestMatches(list.slice(0, 3), 1, 16, compare, 2)
-    expect(checked).toEqual(['c0', 'c1', 'c2'])
-    expect(matches[0].candidate.preview.id).toBe('c0')
-    checked.length = 0
-    const later = await bestMatches(list, 1, 16, compare, 2)
-    expect(later.matches[0].candidate.preview.id).toBe('c3')
+    const { matches, complete } = await bestMatches(list, 1, 16, compare, 2)
+    expect(checked).toHaveLength(10)
+    expect(matches[0].candidate.preview.id).toBe('c9')
+    expect(complete).toBe(true)
+  })
+
+  it('returns exactly what exhaustive ranking returns whenever it says the answer is complete', async () => {
+    // Deterministic pseudo-random fixtures that cross the 8-candidate batch boundary.
+    let seed = 7
+    const next = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648
+      return seed % n
+    }
+    for (let round = 0; round < 200; round++) {
+      const size = 9 + next(12)
+      const ceiling = 1 + next(4)
+      const specs = Array.from({ length: size }, () => {
+        const have = next(ceiling + 1)
+        return { have, missing: next(3), count: have + next(3) }
+      })
+      const list = specs.map((spec, order) => ({ preview: preview(`c${order}`, { ingredientCount: spec.count }), order, apiMissing: 0 }))
+      const scored = (candidate: GroupCandidate) => {
+        const spec = specs[candidate.order]
+        return { ...match(candidate.preview.id, spec.have, spec.missing, candidate.order), candidate }
+      }
+      const limit = 1 + next(5)
+      const { matches, complete } = await bestMatches(list, limit, 32, async (batch) => batch.map(scored), ceiling)
+      const exhaustive = rankMatches(list.map(scored).filter((m) => m.comparison.have.length > 0)).slice(0, limit)
+      expect(complete).toBe(true)
+      expect(ids(matches.map((m) => m.candidate))).toEqual(ids(exhaustive.map((m) => m.candidate)))
+    }
   })
 
   it('checks a whole close group, because a garnish can hide a complete match', async () => {
