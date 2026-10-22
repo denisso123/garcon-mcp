@@ -1,0 +1,190 @@
+{
+ "isLocked": false,
+ "id": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+ "name": "Old Fashioned",
+ "slug": "old-fashioned",
+ "description": "A classic cocktail made with bourbon, sugar, and bitters, served over ice.",
+ "category": "Old_Fashioned",
+ "cuisine": "American",
+ "imageUrl": "https://images.fixmeadrinkapp.com/cocktail-images/3077-Old_Fashioned.jpeg",
+ "imageAlt": "Old Fashioned Cocktail",
+ "baseSpirit": "Whiskey",
+ "difficulty": "Intermediate",
+ "totalTime": 5,
+ "strengthLevel": "Strong",
+ "flavorNotes": [
+  "Woody",
+  "Citrusy",
+  "Spicy"
+ ],
+ "instructions": [
+  {
+   "id": "da73b4c9-80ec-47a5-a720-6987c73f0ff6",
+   "step": 1,
+   "text": "Select and pre-chill an Old-fashioned glass.",
+   "tip": "",
+   "cocktailId": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+   "linkedText": "Select and pre-chill an Old-fashioned glass."
+  },
+  {
+   "id": "6e4e06af-e683-48a7-802d-dbedfd0f1e7a",
+   "step": 2,
+   "text": "Prepare garnish of orange zest twist.",
+   "tip": "",
+   "cocktailId": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+   "linkedText": "Prepare garnish of orange zest twist."
+  },
+  {
+   "id": "a7bee7f6-c94a-49d2-91f9-9785a5c4326f",
+   "step": 3,
+   "text": "STIR all ingredients with ice.",
+   "tip": "",
+   "cocktailId": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+   "linkedText": "[[term:stir|STIR]] all ingredients with ice."
+  },
+  {
+   "id": "a84fe7d2-469a-487b-aeac-ae5fa47419c9",
+   "step": 4,
+   "text": "STRAIN into ice-filled glass (preferably over a large cube or chunk of block ice).",
+   "tip": "",
+   "cocktailId": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+   "linkedText": "[[term:strain|STRAIN]] into ice-filled glass (preferably over a large cube or chunk of block ice)."
+  }
+ ],
+ "ingredients": [
+  {
+   "id": "86e3a6b6-9ab5-44cc-bc24-1f592dff4356",
+   "cocktailId": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+   "ingredientId": "c5a029dd-2058-4945-ab9a-776f52ae3805",
+   "amount": 2,
+   "unit": "shot",
+   "optional": false,
+   "substitutes": [],
+   "ingredient": {
+    "id": "c5a029dd-2058-4945-ab9a-776f52ae3805",
+    "groupCategory": "Base Spirits",
+    "category": "Whiskey",
+    "name": "Bourbon whiskey",
+    "slug": "bourbon-whiskey",
+    "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/bourbon-whiskey.png?v=d42f23f74400",
+    "pageId": "145e25a5-3660-4ba1-bf0a-ede0aafa88ea"
+   }
+  },
+  {
+   "id": "f73374e8-2526-463d-a782-48c646bdde4b",
+   "cocktailId": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+   "ingredientId": "5df36d70-046b-4ccc-a4e5-e118ce700840",
+   "amount": 0.42,
+   "unit": "shot",
+   "optional": false,
+   "substitutes": [],
+   "ingredient": {
+    "id": "5df36d70-046b-4ccc-a4e5-e118ce700840",
+    "groupCategory": "Syrups & Sweeteners",
+    "category": "Simple Syrups",
+    "name": "Rich Simple (2:1) syrup",
+    "slug": "rich-simple-21-syrup",
+    "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/rich-simple-21-syrup.png?v=5d6f3430b6a7",
+    "pageId": "86a07f08-c32e-4d8f-bba3-d7308585173d"
+   }
+  },
+  {
+   "id": "98d4adb4-bcee-4c94-bb28-3f1f4a1a6c5d",
+   "cocktailId": "56a2508d-896b-40ab-9b0e-709bcee762a1",
+   "ingredientId": "84cadce3-02a0-46be-a197-4369d5618c5d",
+   "amount": 3,
+   "unit": "dash",
+   "optional": false,
+   "substitutes": [],
+   "ingredient": {
+    "id": "84cadce3-02a0-46be-a197-4369d5618c5d",
+    "groupCategory": "Bitters",
+    "category": null,
+    "name": "Angostura",
+    "slug": "angostura",
+    "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/angostura.png?v=985fe5e593b9",
+    "pageId": "9d7d7b30-e0f2-487d-a7d0-df38b2f3ef73"
+   }
+  }
+ ],
+ "equipment": [
+  "MixingGlass",
+  "BarSpoon",
+  "Jigger"
+ ],
+ "equipmentItems": [
+  {
+   "key": "MixingGlass",
+   "label": "Mixing Glass",
+   "termSlug": "mixing-glass"
+  },
+  {
+   "key": "BarSpoon",
+   "label": "Bar Spoon",
+   "termSlug": "bar-spoon"
+  },
+  {
+   "key": "Jigger",
+   "label": "Jigger",
+   "termSlug": "jigger"
+  }
+ ],
+ "servingDetails": {
+  "glassware": {
+   "key": "Rocks",
+   "label": "Rocks",
+   "termSlug": "rocks-glass"
+  },
+  "ice": {
+   "key": "LargeCube",
+   "label": "Large Cube",
+   "termSlug": "ice-sphere"
+  },
+  "temperature": {
+   "key": "Chilled",
+   "label": "Chilled",
+   "termSlug": null
+  }
+ },
+ "linkTargets": {
+  "terms": {
+   "stir": {
+    "name": "Stir"
+   },
+   "strain": {
+    "name": "Strain"
+   }
+  },
+  "ingredients": {}
+ },
+ "glassware": "Rocks",
+ "ice": "Large Cube",
+ "garnish": "Orange zest twist",
+ "temperature": "Chilled",
+ "calories": "150-200",
+ "alcoholVolumePercentage": 26.18,
+ "pureAlcoholContent": 19.2,
+ "restrictions": [],
+ "reviews": {
+  "averageRating": 4.5,
+  "totalReviews": 40,
+  "distribution": {
+   "1": 0,
+   "2": 0,
+   "3": 9,
+   "4": 18,
+   "5": 13
+  }
+ },
+ "userReviewRating": null,
+ "isSaved": false,
+ "collections": [
+  {
+   "id": "6f8f2ea7-3075-4aee-90a9-b7b99a8fa5fe",
+   "title": "Bourbon cocktails",
+   "slug": "bourbon-cocktails",
+   "description": "Rich oak, bitters, citrus, and fruit give bourbon cocktails a deeper classic-drink profile.",
+   "mainImage": "https://images.fixmeadrinkapp.com/collection-images/3874ef98-d9cf-4739-a5d6-3a066eff7631-bourbon-cocktails.png"
+  }
+ ]
+}

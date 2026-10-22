@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars
+_agent/build/
+_agent/runs/wrangler-dev.log
+_agent/runs/last.err
+*.zip
+.DS_Store

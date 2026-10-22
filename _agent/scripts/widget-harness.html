@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Widget harness</title>
+<style>body{margin:0;padding:24px;font:14px system-ui;background:#eee}body.dark{background:#111;color:#eee}iframe{width:420px;border:1px solid #ccc;border-radius:12px;background:transparent;display:block}</style></head>
+<body>
+<p id="status">Loading…</p>
+<iframe id="frame" sandbox="allow-scripts allow-popups"></iframe>
+<script>
+// Plays an MCP Apps host: reads the widget resource and a live tool result
+// from the local server, answers ui/initialize, then sends the result.
+const params = new URLSearchParams(location.search)
+const theme = params.get('theme') || 'light'
+const server = params.get('server') || 'http://127.0.0.1:8787/mcp'
+if (theme === 'dark') document.body.classList.add('dark')
+let id = 1
+async function rpc(method, p) {
+  const r = await fetch(server, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params: p }) })
+  const t = await r.text()
+  const j = t.startsWith('{') ? t : t.split('\n').find(l => l.startsWith('data: ')).slice(6)
+  return JSON.parse(j).result
+}
+const log = []
+window.harnessLog = log
+;(async () => {
+  const res = await rpc('resources/read', { uri: 'ui://ask-garcon/cocktail-list-v1.html' })
+  const result = await rpc('tools/call', { name: 'find_cocktails_by_ingredients', arguments: { ingredients: (params.get('bar') || 'gin,limes,simple syrup,soda water').split(',') } })
+  const frame = document.getElementById('frame')
+  window.addEventListener('message', (e) => {
+    if (e.source !== frame.contentWindow) return
+    const m = e.data; log.push(m.method || ('response ' + m.id))
+    if (m.method === 'ui/initialize') {
+      frame.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2026-01-26', hostInfo: { name: 'harness', version: '1' }, hostCapabilities: { openLinks: {} }, hostContext: { theme } } }, '*')
+    } else if (m.method === 'ui/notifications/initialized') {
+      frame.contentWindow.postMessage({ jsonrpc: '2.0', method: 'ui/notifications/tool-result', params: result }, '*')
+    } else if (m.method === 'ui/notifications/size-changed') {
+      frame.style.height = m.params.height + 'px'
+    } else if (m.method === 'ui/open-link') {
+      document.getElementById('status').textContent = 'open-link: ' + m.params.url
+      frame.contentWindow.postMessage({ jsonrpc: '2.0', id: m.id, result: {} }, '*')
+    }
+  })
+  frame.srcdoc = res.contents[0].text
+  document.getElementById('status').textContent = 'Rendered ' + result.structuredContent.cocktails.length + ' cocktails'
+})()
+</script></body></html>

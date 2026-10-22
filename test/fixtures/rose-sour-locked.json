@@ -1,0 +1,19 @@
+{
+ "id": "75b95395-7b9d-421b-b43d-bcf9d0d14f65",
+ "name": "Rose Sour",
+ "slug": "rose-sour",
+ "imageUrl": "https://images.fixmeadrinkapp.com/cocktail-images/2459-Rose_Sour.jpeg",
+ "imageAlt": "Rose Sour cocktail",
+ "baseSpirit": "Floral",
+ "strengthLevel": "Medium",
+ "totalTime": 5,
+ "flavorNotes": [
+  "Floral",
+  "Citrusy"
+ ],
+ "ingredientCount": 2,
+ "isFree": false,
+ "isLocked": true,
+ "description": "A floral and citrusy cocktail featuring rose petal liqueur and freshly squeezed lime juice, served over crushed ice.",
+ "difficulty": "Intermediate"
+}
