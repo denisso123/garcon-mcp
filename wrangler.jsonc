@@ -9,6 +9,9 @@
   "routes": [{ "pattern": "mcp.fixmeadrinkapp.com", "custom_domain": true }],
   // No workers.dev origin: the Cache API only works on the custom domain.
   "workers_dev": false,
+  // Fonts (DM Sans, Inter) and Garçon images for the widget and the public
+  // pages. Served before the Worker; public/_headers adds CORS and caching.
+  "assets": { "directory": "./public" },
   "ratelimits": [
     // Per client IP. ChatGPT and Claude call from shared IP ranges, so this
     // is generous. CALLER_LIMITER adds a per-user limit when ChatGPT sends

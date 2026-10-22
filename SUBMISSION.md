@@ -23,7 +23,7 @@ Prerequisites: access to the Cloudflare account that holds the `fixmeadrinkapp.c
 ```bash
 cd /Users/denisso/Documents/work/blankpage/fixmeadrink/garcon-mcp
 pnpm install
-pnpm test                 # expect 73 passed
+pnpm test                 # expect 89 passed
 pnpm typecheck
 npx wrangler login        # browser sign-in to the Cloudflare account with the zone
 npx wrangler deploy
@@ -106,7 +106,7 @@ curl https://mcp.fixmeadrinkapp.com/.well-known/openai-apps-challenge   # must p
 | countries | US, GB, CA, AU, IE, NZ. Widen or narrow before submitting. |
 | release notes | "First release: find cocktails from your ingredients, full recipes, spirit and bar-term explanations, and similar drinks, with low and zero-proof options." |
 
-Tool metadata the scan imports from the server: names, titles, descriptions, input and output schemas, annotations (`readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false`, `idempotentHint: true` on all four), the widget resource with `ui.csp` (`resourceDomains: https://images.fixmeadrinkapp.com`, no connect or frame domains), `ui.domain`, and the server instructions. No iframes are embedded, so no iframe justification is needed.
+Tool metadata the scan imports from the server: names, titles, descriptions, input and output schemas, annotations (`readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false`, `idempotentHint: true` on all four), the widget resource with `ui.csp` (`resourceDomains: https://images.fixmeadrinkapp.com, https://mcp.fixmeadrinkapp.com` for recipe photos and the Garçon image, no connect or frame domains), `ui.domain`, and the server instructions. No iframes are embedded, so no iframe justification is needed.
 
 ### B6. Review test cases (in `plugin.json`; five positive, three negative)
 

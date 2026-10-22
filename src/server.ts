@@ -16,7 +16,7 @@ import {
 } from './service'
 import { AGE_NOTE, IMAGE_ORIGIN, MCP_ORIGIN, SERVER_NAME, SERVER_TITLE, SERVER_VERSION, SITE_URL } from './site'
 import { UpstreamError, type Upstream } from './upstream'
-import { WIDGET_HTML, WIDGET_URI } from './widget'
+import { WIDGET_URI, widgetHtml } from './widget'
 
 /** Which host a route serves. Only ChatGPT gets a ui.domain (see README). */
 export type HostProfile = 'default' | 'chatgpt'
@@ -58,7 +58,8 @@ async function run<T extends object>(work: () => Promise<ToolOutput<T>>): Promis
 function widgetResourceMeta(profile: HostProfile) {
   const ui: Record<string, unknown> = {
     prefersBorder: true,
-    csp: { connectDomains: [], resourceDomains: [IMAGE_ORIGIN] },
+    // Recipe photos, plus the Worker's own origin for the fonts and the Garçon image.
+    csp: { connectDomains: [], resourceDomains: [IMAGE_ORIGIN, MCP_ORIGIN] },
   }
   const meta: Record<string, unknown> = {
     ui,
@@ -67,7 +68,7 @@ function widgetResourceMeta(profile: HostProfile) {
     'openai/widgetPrefersBorder': true,
     'openai/widgetCSP': {
       connect_domains: [],
-      resource_domains: [IMAGE_ORIGIN],
+      resource_domains: [IMAGE_ORIGIN, MCP_ORIGIN],
       redirect_domains: [SITE_URL],
     },
   }
@@ -97,7 +98,8 @@ export function createServer(up: Upstream, profile: HostProfile = 'default') {
         {
           uri: WIDGET_URI,
           mimeType: 'text/html;profile=mcp-app',
-          text: WIDGET_HTML,
+          // ChatGPT's UI guidelines ask apps not to use custom fonts; other hosts get the brand fonts.
+          text: widgetHtml({ brandFonts: profile !== 'chatgpt' }),
           _meta: widgetResourceMeta(profile),
         },
       ],

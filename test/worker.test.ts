@@ -51,7 +51,10 @@ describe('protocol eras and routes', () => {
     const { contents } = await client.readResource(WIDGET_URI)
     expect(contents[0].mimeType).toBe('text/html;profile=mcp-app')
     const ui = contents[0]._meta?.ui as { domain?: string; csp: { resourceDomains: string[] } }
-    expect(ui.csp.resourceDomains).toEqual(['https://images.fixmeadrinkapp.com'])
+    expect(ui.csp.resourceDomains).toEqual(['https://images.fixmeadrinkapp.com', 'https://mcp.fixmeadrinkapp.com'])
+    // Brand fonts everywhere except ChatGPT, whose UI guidelines ask for system fonts.
+    const html = (contents[0] as { text: string }).text
+    expect(html.includes('@font-face')).toBe(route !== '/chatgpt/mcp')
     expect(ui.domain).toBe(route === '/chatgpt/mcp' ? 'https://mcp.fixmeadrinkapp.com' : undefined)
 
     const result = await client.callTool('find_cocktails_by_ingredients', { ingredients: ['bourbon', 'sugar', 'bitters'] })

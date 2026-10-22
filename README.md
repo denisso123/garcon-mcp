@@ -79,14 +79,18 @@ The tests import the Worker's default export and drive it with fake rate limiter
 
 `pnpm smoke` (or `node _agent/scripts/smoke.mjs <baseUrl>`) states the expected outcome of every case, checks the result fields and the age line, and exits 1 on any mismatch. It writes a transcript to `_agent/runs/`, which git ignores. On a cold cache the first run can hit the 60-a-minute upstream budget (see above); run it again after a minute.
 
-The widget can be checked in a browser with `_agent/scripts/widget-harness.html` (serve `_agent/scripts` on any local port while `pnpm dev` runs; add `?theme=dark`, `?bar=gin,lime`, `?case=error` for a tool error, `?case=cancel` for a cancelled call, `?server=` for another port). It plays an MCP Apps host: answers `ui/initialize`, sends `tool-input`, then the tool result or `tool-cancelled`, resizes on `size-changed` and logs `ui/open-link`.
+### Widget and pages
+
+The widget (`src/widget.ts`) and the public pages (`src/pages.ts`) use the fixmeadrinkapp.com tokens, copied into `src/brand.ts` under the site's own names (colours, type scale, spacing, radii, shadows), with the Garçon mascot mark and "Garçon" wordmark in DM Sans semibold. Fonts (DM Sans and Inter, OFL, self-hosted) and the Garçon images are Workers static assets in `public/`; `public/_headers` adds CORS for the fonts, because the widget loads them from the host's sandboxed iframe. The widget resource's CSP declares `https://images.fixmeadrinkapp.com` (recipe photos) and `https://mcp.fixmeadrinkapp.com` (fonts and the Garçon image). The `/chatgpt/mcp` route serves the widget without the brand fonts: OpenAI's UI guidelines say "Don't use custom fonts, even in full screen modes" (https://developers.openai.com/apps-sdk/concepts/ui-guidelines), so it uses the host's `--font-sans` or the system stack. Claude's guidelines prefer host tokens for structural colour and bundled fonts over allowlisted CDNs (https://claude.com/docs/connectors/building/mcp-apps/design-guidelines, https://claude.com/docs/connectors/building/mcp-apps/transparent-theming). The widget keeps its background transparent and follows the host's light or dark theme with `light-dark()`, but it colours text, tags and links with the site's tokens (dark values derived from them) so it reads as fixmeadrinkapp.com; if a reviewer objects, map `--c-text`, `--c-muted` and `--c-rule` in `src/widget.ts` to the host's `--color-*` variables.
+
+`_agent/scripts/widget-harness.html` plays an MCP Apps host while `pnpm dev` runs: it reads the widget resource, points the production asset origin at the local server, applies the resource's own CSP to the frame (so a missing CSP entry breaks a font or image here too), answers `ui/initialize`, sends `tool-input`, then the tool result or `tool-cancelled`, resizes on `size-changed` and logs `ui/open-link`. Open it as a file. Query: `?case=result|lowproof|empty|error|cancel|loading|long|noimage`, `?theme=dark`, `?width=760`, `?route=/chatgpt/mcp`, `?bar=gin,lime`, `?server=http://127.0.0.1:8788`.
 
 ## Test and run evidence (22 Oct 2026)
 
-- `pnpm test`: 5 files, **73 tests passed**. `pnpm typecheck`: clean, tests included.
+- `pnpm test`: 6 files, **89 tests passed**. `pnpm typecheck`: clean, tests included.
 - `wrangler deploy --dry-run`: 745 KiB, 157 KiB gzipped.
 - `wrangler dev` + `pnpm smoke` against the live API: 18 tool cases and 2 ingress checks on each route, each with a 2025-era and a 2026-07-28 client: **all cases matched** (second run; the first, cold run hit the upstream budget after five `find` calls).
-- Widget harness: rendered in light and dark, showed the tool error text for an error result, and cleared to "Search cancelled." on `tool-cancelled`.
+- Widget harness: results, low-proof, empty, error, cancelled, loading, long-name and missing-image states in light and dark at 420 and 760 px; screenshots in `marketing/seo/outreach/2026-10-q4/previews/mcp/`.
 
 Excerpt (2025-era client, `wrangler dev`, live API):
 
@@ -120,6 +124,6 @@ get_cocktail_recipe {"name":"not a real drink qq"}  → isError: No cocktail cal
 ## Folder layout
 
 - `README.md`, `SUBMISSION.md`: read these.
-- `src/`: Worker and MCP server. `test/`: vitest suites and API fixtures.
+- `src/`: Worker and MCP server. `public/`: fonts and images served as static assets. `test/`: vitest suites and API fixtures.
 - `plugin/`: the OpenAI plugin package to zip and upload (`plugin.json`, `mcp.json`, `assets/`).
 - `_agent/`: smoke script and widget harness (`scripts/`); run transcripts and build output stay local and are not committed.
