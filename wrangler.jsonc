@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "garcon-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Production hostname. Wrangler creates the DNS record and certificate on
+  // deploy because the zone fixmeadrinkapp.com is on this Cloudflare account.
+  "routes": [{ "pattern": "mcp.fixmeadrinkapp.com", "custom_domain": true }],
+  // No workers.dev origin: the Cache API only works on the custom domain.
+  "workers_dev": false,
+  // Fonts (DM Sans, Inter) and Garçon images for the widget and the public
+  // pages. Served before the Worker; public/_headers adds CORS and caching.
+  "assets": { "directory": "./public" },
+  "ratelimits": [
+    // Per client IP. ChatGPT and Claude call from shared IP ranges, so this
+    // is generous. CALLER_LIMITER adds a per-user limit when ChatGPT sends
+    // openai/subject; it is caller-supplied, so it never replaces this one.
+    { "name": "IP_LIMITER", "namespace_id": "4101", "simple": { "limit": 300, "period": 60 } },
+    { "name": "CALLER_LIMITER", "namespace_id": "4102", "simple": { "limit": 30, "period": 60 } },
+    // Requests that miss every cache and reach the recipe API. Counters are
+    // per Cloudflare location, so this is not a global cap; see README.
+    { "name": "UPSTREAM_LIMITER", "namespace_id": "4103", "simple": { "limit": 60, "period": 60 } }
+  ],
+  "observability": { "enabled": true, "head_sampling_rate": 1 }
+}

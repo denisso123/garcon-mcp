@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Widget harness</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; padding: 16px; font: 14px system-ui; background: #faf9f5; }
+  body.dark { background: #262624; }
+  :root:has(body.dark) { color-scheme: dark; }
+  iframe { display: block; border: 0; background: transparent; width: 420px; height: 120px; }
+  #status { position: absolute; left: -9999px; }
+</style></head>
+<body>
+<p id="status" data-state="loading">Loading…</p>
+<iframe id="frame" sandbox="allow-scripts allow-popups" title="Ask Garçon widget"></iframe>
+<script>
+// Plays an MCP Apps host: reads the widget resource and a live tool result
+// from the local server, answers ui/initialize, sends tool-input, then the
+// result (or a cancellation). The production asset origin in the resource is
+// pointed at the local server, and the resource's own CSP is applied to the
+// frame the way a host would, so a missing CSP entry shows up as a broken
+// font or image here too.
+//
+// Serve this folder from localhost (python3 -m http.server 8790): the server
+// refuses the null Origin of a file:// page.
+//
+// Query:
+//   ?theme=light|dark
+//   ?case=result|lowproof|empty|error|cancel|loading|long|noimage
+//   ?width=420           frame width in px (the host's container width)
+//   ?route=/mcp|/chatgpt/mcp
+//   ?bar=gin,lime        ingredients for result-style cases
+//   ?server=http://127.0.0.1:8787
+const params = new URLSearchParams(location.search)
+const theme = params.get('theme') || 'light'
+const scenario = params.get('case') || 'result'
+const server = params.get('server') || 'http://127.0.0.1:8787'
+const route = params.get('route') || '/mcp'
+const PROD_ORIGIN = 'https://mcp.fixmeadrinkapp.com'
+if (theme === 'dark') document.body.classList.add('dark')
+const frame = document.getElementById('frame')
+frame.style.width = (params.get('width') || '420') + 'px'
+const status = (text, state) => { const el = document.getElementById('status'); el.textContent = text; if (state) el.dataset.state = state }
+
+let id = 1
+async function rpc(method, p) {
+  const r = await fetch(server + route, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'mcp-protocol-version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: id++, method, params: p }) })
+  const t = await r.text()
+  const j = t.startsWith('{') ? t : t.split('\n').find(l => l.startsWith('data: ')).slice(6)
+  return JSON.parse(j).result
+}
+
+function withHostCsp(html, csp) {
+  const local = (list) => (list || []).map((d) => d === PROD_ORIGIN ? server : d).join(' ')
+  const res = local(csp && csp.resourceDomains)
+  const policy = [
+    "default-src 'none'",
+    "script-src 'unsafe-inline' " + res,
+    "style-src 'unsafe-inline' " + res,
+    'img-src data: ' + res,
+    'font-src ' + res,
+    'connect-src ' + (local(csp && csp.connectDomains) || "'none'"),
+  ].join('; ')
+  return html.replace('<head>', `<head>\n<meta http-equiv="Content-Security-Policy" content="${policy}">`)
+}
+
+const log = []
+window.harnessLog = log
+;(async () => {
+  const res = await rpc('resources/read', { uri: 'ui://ask-garcon/cocktail-list-v2.html' })
+  const content = res.contents[0]
+  const defaultBar = scenario === 'lowproof' ? 'aperol,prosecco,soda water,orange juice,lime' : 'gin,limes,simple syrup,soda water'
+  const bar = scenario === 'error' ? [' , '] : scenario === 'empty' ? ['xyzzy'] : (params.get('bar') || defaultBar).split(',')
+  const args = { ingredients: bar }
+  if (scenario === 'lowproof') args.strength = 'zero_or_low'
+  const result = scenario === 'loading' || scenario === 'cancel' ? null : await rpc('tools/call', { name: 'find_cocktails_by_ingredients', arguments: args })
+  if (result && scenario === 'long') result.structuredContent.cocktails[0].name = 'The Extremely Long Midsummer Garden Party Elderflower and Cucumber Gin Fizz Royale'
+  if (result && scenario === 'noimage') result._meta = { images: {} }
+
+  window.addEventListener('message', (e) => {
+    if (e.source !== frame.contentWindow) return
+    const post = (message) => frame.contentWindow.postMessage({ jsonrpc: '2.0', ...message }, '*')
+    const m = e.data; log.push(m.method || ('response ' + m.id))
+    if (m.method === 'ui/initialize') {
+      post({ id: m.id, result: { protocolVersion: '2026-01-26', hostInfo: { name: 'harness', version: '1' }, hostCapabilities: { openLinks: {} }, hostContext: { theme, displayMode: 'inline', containerDimensions: { maxWidth: frame.clientWidth } } } })
+    } else if (m.method === 'ui/notifications/initialized') {
+      post({ method: 'ui/notifications/tool-input', params: { arguments: args } })
+      if (scenario === 'cancel') post({ method: 'ui/notifications/tool-cancelled', params: { reason: 'user action' } })
+      else if (result) post({ method: 'ui/notifications/tool-result', params: result })
+      setTimeout(() => status(scenario + ' rendered', 'ready'), 600)
+    } else if (m.method === 'ui/notifications/size-changed') {
+      frame.style.height = m.params.height + 'px'
+    } else if (m.method === 'ui/open-link') {
+      status('open-link: ' + m.params.url)
+      post({ id: m.id, result: {} })
+    }
+  })
+  frame.srcdoc = withHostCsp(content.text.split(PROD_ORIGIN).join(server), content._meta && content._meta.ui && content._meta.ui.csp)
+})().catch((error) => status('harness error: ' + error.message, 'error'))
+</script></body></html>

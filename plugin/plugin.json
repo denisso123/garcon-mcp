@@ -1,0 +1,100 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "ask-garcon",
+  "version": "1.0.0",
+  "description": "Find cocktails you can make from the bottles you already own, get full recipes, learn spirits and bar terms, and discover similar drinks, with low and zero-proof options. Recipes come from the Garçon catalogue on fixmeadrinkapp.com.",
+  "author": {
+    "name": "BLANKPAGE ENTERPRISE S.R.L.",
+    "email": "hey@blankpage-studio.com",
+    "url": "https://fixmeadrinkapp.com"
+  },
+  "homepage": "https://fixmeadrinkapp.com",
+  "keywords": ["cocktails", "recipes", "home bar", "mocktails", "drinks"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Ask Garçon",
+        "shortDescription": "Cocktails from your own bar",
+        "longDescription": "Drinks from the bottles you already own.\n\nTell Ask Garçon what is on your shelf and it finds cocktails you can make now, plus the ones you are one bottle away from, ranked by what is missing. It also gives full recipes with amounts in oz and ml, glass, ice, garnish and steps; explains spirits, liqueurs, mixers, techniques and glassware in plain words, with substitutes; and suggests drinks like one you already enjoy.\n\nEvery answer includes low and zero-proof options, and you can ask for mocktails and low-ABV drinks only. Each result links to its recipe, ingredient or glossary page on fixmeadrinkapp.com.\n\nAsk Garçon reads from the free part of the Garçon recipe catalogue. It needs no account, does not store what you ask, and makes no health or nutrition claims. Some recipes in the catalogue are premium: for those it shows the description and free recipes like it. For adults of legal drinking age.",
+        "developerName": "BLANKPAGE ENTERPRISE S.R.L.",
+        "category": "Lifestyle",
+        "capabilities": [
+          "Find cocktails from your ingredients",
+          "Get a cocktail recipe",
+          "Explain a spirit, ingredient or bar term",
+          "Suggest similar cocktails"
+        ],
+        "websiteURL": "https://fixmeadrinkapp.com",
+        "supportURL": "https://fixmeadrinkapp.com/support",
+        "privacyPolicyURL": "https://mcp.fixmeadrinkapp.com/privacy",
+        "termsOfServiceURL": "https://fixmeadrinkapp.com/terms-of-service",
+        "defaultPrompt": [
+          "I have gin, limes, sugar and soda water. What can I make?",
+          "How do I make an Espresso Martini?",
+          "Suggest a low-alcohol drink like a Moscow Mule."
+        ],
+        "brandColor": "#5B3FD1",
+        "brandColorDark": "#A993FF",
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/logo.png"
+      },
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Find drinks from a home bar",
+              "prompt": "I have gin, limes, simple syrup and soda water. What cocktails can I make?",
+              "tools_triggered": "find_cocktails_by_ingredients",
+              "expected_behavior": "Shows up to five free recipes ranked by fewest missing ingredients (for example Churchill Martini as ready to make, then drinks missing one ingredient such as Southside), each with its fixmeadrinkapp.com recipe link, plus at least one low or zero-proof option. In ChatGPT the results render as a card list."
+            },
+            {
+              "description": "Mocktail and low-proof filter",
+              "prompt": "I only want low-alcohol drinks. I have Aperol, prosecco, soda water and orange juice.",
+              "tools_triggered": "find_cocktails_by_ingredients",
+              "expected_behavior": "Calls the tool with strength zero_or_low and returns only Low or Non Alcoholic recipes, such as Buck's Fizz as ready to make, each with what is missing and a recipe link."
+            },
+            {
+              "description": "Full recipe by name",
+              "prompt": "How do I make an Espresso Martini?",
+              "tools_triggered": "get_cocktail_recipe",
+              "expected_behavior": "Returns the Espresso Martini recipe: vodka 1½ oz (44 ml), espresso 1 oz (30 ml), coffee liqueur ⅔ oz (20 ml), martini glass, coffee bean garnish and numbered steps, with the link https://fixmeadrinkapp.com/recipes/espresso-martini."
+            },
+            {
+              "description": "Explain a spirit with substitutes",
+              "prompt": "What is mezcal and what can I use instead?",
+              "tools_triggered": "explain_bar_term",
+              "expected_behavior": "Explains mezcal (roasted agave, smoky taste, typical 38 to 55% ABV), lists substitutes including a zero-proof one, and links https://fixmeadrinkapp.com/ingredients/mezcal."
+            },
+            {
+              "description": "Similar and lighter drinks",
+              "prompt": "I like Moscow Mules. Suggest something similar, and a lighter option too.",
+              "tools_triggered": "suggest_similar_cocktail",
+              "expected_behavior": "Lists drinks similar to the Moscow Mule (for example Raspberry Mule) with strength, flavours and recipe links, marks premium recipes, and adds low or zero-proof options."
+            }
+          ],
+          "negative": [
+            {
+              "description": "Out of scope: buying alcohol",
+              "prompt": "Order me a bottle of tequila for delivery tonight."
+            },
+            {
+              "description": "Out of scope: health or medical advice",
+              "prompt": "How many cocktails can I drink and still be safe to drive?"
+            },
+            {
+              "description": "Out of scope: unrelated request",
+              "prompt": "Book me a table at a cocktail bar in London for Friday."
+            }
+          ]
+        },
+        "demo_recording_url": "https://REPLACE-WITH-DEMO-VIDEO-URL",
+        "commerce": false,
+        "commerce_description": "Ask Garçon does not sell products, show prices or process payments. It only reads public recipe data."
+      },
+      "publication": {
+        "countries": ["US", "GB", "CA", "AU", "IE", "NZ"],
+        "release_notes": "First release: find cocktails from your ingredients, full recipes, spirit and bar-term explanations, and similar drinks, with low and zero-proof options."
+      }
+    }
+  }
+}

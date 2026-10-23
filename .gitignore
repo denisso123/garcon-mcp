@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+.dev.vars
+_agent/build/
+_agent/runs/
+*.zip
+.DS_Store

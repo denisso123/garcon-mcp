@@ -1,0 +1,12 @@
+# The widget runs in the host's sandboxed iframe, so font requests are
+# cross-origin (CORS mode) and need an explicit allow. File names carry the
+# font version, so they can be cached for a year.
+/fonts/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff
+
+/images/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=86400
+  X-Content-Type-Options: nosniff
