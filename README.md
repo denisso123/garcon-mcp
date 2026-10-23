@@ -90,7 +90,7 @@ The widget (`src/widget.ts`) and the public pages (`src/pages.ts`) use the fixme
 ## Test and run evidence (22 Oct 2026)
 
 - `pnpm test`: 8 files, **140 tests passed**. `pnpm typecheck`: clean, tests included.
-- `wrangler deploy --dry-run`: 786 KiB, 169 KiB gzipped, plus 10 static assets (fonts and images).
+- `wrangler deploy --dry-run`: 800 KiB, 169 KiB gzipped, plus 10 static assets (fonts and images).
 - `wrangler dev` + `pnpm smoke` against the live API: 18 tool cases and 2 ingress checks on each route, each with a 2025-era and a 2026-07-28 client: **all cases matched** (second run; the first, cold run hit the upstream budget after five `find` calls).
 - Widget harness: results, low-proof, empty, error, cancelled, loading, long-name and missing-image states in light and dark at 420 and 760 px; screenshots in `marketing/seo/outreach/2026-10-q4/previews/mcp/`.
 
