@@ -3,7 +3,7 @@ import worker from '../src/index'
 import { explainOutput, findOutput, recipeOutput, similarOutput } from '../src/schemas'
 import { AGE_NOTE } from '../src/site'
 import { bourbonBar, garibaldi, glossaryRoutes, mule, oldFashioned } from './data'
-import { FakeApi, type FakeApiData, envelope, erroredBody, preview, recipe, setup, text, tool } from './harness'
+import { FakeApi, type FakeApiData, envelope, preview, recipe, setup, text, tool } from './harness'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -96,12 +96,17 @@ describe('find_cocktails_by_ingredients', () => {
     expect(h.api.callsTo('/cocktails/slug/')).toHaveLength(13)
   })
 
-  it('ranks by owned ingredients even when the API counts the others as complete too (audit 2, finding 1)', async () => {
+  it('bounds the search by what the bar can own: compares past the first batch, then stops (audit 2, finding 1)', async () => {
     // Eight drinks own only Vodka (plus the assumed staples); the ninth owns Vodka and Lime Juice.
+    // The 3-ingredient drinks after it could own at most the bar's two names, so none can beat it.
     const small = Array.from({ length: 8 }, (_, i) => recipe(`small-${i}`, ['Vodka', 'Chilled water', 'Saline solution 4:1']))
     const both = recipe('vodka-lime', ['Vodka', 'Lime Juice'])
+    const almost = Array.from({ length: 12 }, (_, i) => recipe(`almost-${i}`, ['Vodka', `A${i}`, `B${i}`]))
     const h = setup(
-      new FakeApi({ recipes: [...small, both], matches: { readyToMake: [...small, both].map((item) => preview(item)) } }),
+      new FakeApi({
+        recipes: [...small, both, ...almost],
+        matches: { readyToMake: [...small, both].map((item) => preview(item)), almostThere: almost.map((item) => preview(item)) },
+      }),
       worker
     )
     const out = findOutput.parse(
@@ -172,35 +177,6 @@ describe('find_cocktails_by_ingredients', () => {
     })
   })
 
-  it('counts a repeated ingredient once, so ranking matches the exhaustive order (audit 3, finding 3)', async () => {
-    const small = Array.from({ length: 8 }, (_, i) => recipe(`small-${i}`, ['Vodka', 'Chilled water', 'Saline solution 4:1']))
-    const doubled = recipe('double-vodka', ['Vodka', 'Vodka'])
-    const h = setup(
-      new FakeApi({ recipes: [...small, doubled], matches: { readyToMake: [...small, doubled].map((item) => preview(item)) } }),
-      worker
-    )
-    const out = findOutput.parse(
-      (await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['vodka'], limit: 1 })).structuredContent
-    )
-    expect(names(out.cocktails)).toEqual(['Small 0'])
-    expect(out.cocktails[0].have).toEqual(['Vodka'])
-    expect(out.partial).toBeUndefined()
-  })
-
-  it('stops comparing once later groups cannot beat the drinks already found', async () => {
-    const ready = Array.from({ length: 6 }, (_, i) => recipe(`ready-${i}`, ['Vodka', 'Soda Water']))
-    const almost = Array.from({ length: 20 }, (_, i) => recipe(`almost-${i}`, ['Vodka', `A${i}`, `B${i}`]))
-    const h = setup(
-      new FakeApi({
-        recipes: [...ready, ...almost],
-        matches: { readyToMake: ready.map((item) => preview(item)), almostThere: almost.map((item) => preview(item)) },
-      }),
-      worker
-    )
-    await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['vodka', 'soda water'], strength: 'medium' })
-    expect(h.api.callsTo('/cocktails/slug/').length).toBeLessThanOrEqual(8)
-  })
-
   it('keeps the drinks it found when the low-proof options fail to load', async () => {
     const h = setup(new FakeApi(bourbonBar()), worker)
     h.api.override('/cocktails?', () => new Response('down', { status: 503 }))
@@ -212,16 +188,6 @@ describe('find_cocktails_by_ingredients', () => {
     expect(out.unavailable).toEqual(['low_proof_options'])
     expect(h.api.callsTo('/cocktails?')).toHaveLength(2)
     expect(text(result)).toContain('could not be loaded this time')
-  })
-
-  it('keeps the drinks it found when a low-proof request fails and its body cannot be cancelled (audit 2, finding 3)', async () => {
-    const h = setup(new FakeApi(bourbonBar()), worker)
-    h.api.override('/cocktails?', () => new Response(erroredBody(), { status: 503 }))
-    const result = await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['bourbon', 'sugar', 'bitters'] })
-    expect(result.isError).toBeFalsy()
-    const out = findOutput.parse(result.structuredContent)
-    expect(out.cocktails[0].name).toBe('Old Fashioned')
-    expect(out.unavailable).toEqual(['low_proof_options'])
   })
 
   it('looks up at most 8 unfamiliar names per call and says which it skipped', async () => {

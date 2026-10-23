@@ -136,7 +136,8 @@ describe('widget script in a host', () => {
   })
 
   it('opens a card through ui/open-link when the host offers it, and stops at a refusal', async () => {
-    const w = boot()
+    const openExternal = vi.fn()
+    const w = boot({ openai: { openExternal } })
     w.answer('ui/initialize', { hostContext: {}, hostCapabilities: { openLinks: {} } })
     await w.settle()
     const click = { target: target('a[data-href]', { 'data-href': RECIPE_URL }), preventDefault: vi.fn() }
@@ -147,18 +148,24 @@ describe('widget script in a host', () => {
     w.answer('ui/open-link', { isError: true })
     await w.settle()
     expect(w.fakeWindow.open).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
     expect(w.elements['link-help'].hidden).toBe(true)
   })
 
   it('offers a retry and a copyable URL when the host never answers, without opening anything itself', async () => {
     vi.useFakeTimers()
-    const w = boot()
+    const openExternal = vi.fn()
+    const w = boot({ openai: { openExternal } })
     w.answer('ui/initialize', { hostContext: {}, hostCapabilities: { openLinks: {} } })
     await vi.advanceTimersByTimeAsync(0)
     w.elements.root.dispatch('click', { target: target('a[data-href]', { 'data-href': RECIPE_URL }), preventDefault: vi.fn() })
-    await vi.advanceTimersByTimeAsync(15_000)
+    await vi.advanceTimersByTimeAsync(14_999)
+    expect(w.elements['link-help'].hidden).toBe(true)
+    await vi.advanceTimersByTimeAsync(1)
     expect(w.fakeWindow.open).not.toHaveBeenCalled()
+    expect(openExternal).not.toHaveBeenCalled()
     expect(w.elements['link-help'].hidden).toBe(false)
+    expect(w.elements['link-help'].innerHTML).toContain(`<button type="button" class="retry" data-retry="${RECIPE_URL}">Try again</button>`)
     expect(w.elements['link-help'].innerHTML).toContain(`<span class="copy-url">${RECIPE_URL}</span>`)
 
     w.elements['link-help'].dispatch('click', { target: target('button[data-retry]', { 'data-retry': RECIPE_URL }) })
@@ -180,6 +187,17 @@ describe('widget script in a host', () => {
     expect(w.requests('ui/open-link')).toHaveLength(0)
   })
 
+  it('offers the retry and copyable URL when the host negotiated no opener', async () => {
+    const w = boot()
+    w.answer('ui/initialize', { hostContext: {}, hostCapabilities: {} })
+    await w.settle()
+    w.clickCard()
+    await w.settle()
+    expect(w.requests('ui/open-link')).toHaveLength(0)
+    expect(w.fakeWindow.open).not.toHaveBeenCalled()
+    expect(w.elements['link-help'].hidden).toBe(false)
+  })
+
   it('never opens a link that is not on fixmeadrinkapp.com', async () => {
     const w = boot()
     w.answer('ui/initialize', { hostContext: {}, hostCapabilities: { openLinks: {} } })
@@ -196,6 +214,12 @@ describe('widget script in a host', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(w.fakeWindow.open).toHaveBeenCalledWith(RECIPE_URL, '_blank', 'noopener')
     expect(w.elements['link-help'].hidden).toBe(true)
+
+    // A blocked popup (window.open returns null) offers the retry instead.
+    w.fakeWindow.open.mockReturnValue(null)
+    w.clickCard()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(w.elements['link-help'].hidden).toBe(false)
   })
 
   it('accepts a late initialisation answer (audit 4, finding 2)', async () => {

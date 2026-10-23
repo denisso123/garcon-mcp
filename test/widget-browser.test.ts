@@ -13,7 +13,9 @@ const URI = 'ui://ask-garcon/cocktail-list-v2.html'
 const MCP = 'https://mcp.fixmeadrinkapp.com'
 const IMAGES = 'https://images.fixmeadrinkapp.com'
 const PUBLIC = new URL('../public/', import.meta.url)
-const available = existsSync(chromium.executablePath())
+// Skips without the browser locally; with CI=1 the suite is required, so a
+// missing browser fails the launch instead of dropping the coverage.
+const run = existsSync(chromium.executablePath()) || Boolean(process.env.CI)
 
 interface Resource {
   text: string
@@ -77,7 +79,7 @@ frame.srcdoc = ${JSON.stringify(srcdoc).replace(/</g, '\\u003c')}
 </script></body></html>`
 }
 
-describe.skipIf(!available)('widget in Chrome for Testing', { timeout: 30_000 }, () => {
+describe.runIf(run)('widget in Chrome for Testing', { timeout: 30_000 }, () => {
   let browser: Browser
 
   beforeAll(async () => {
@@ -87,9 +89,9 @@ describe.skipIf(!available)('widget in Chrome for Testing', { timeout: 30_000 },
     await browser?.close()
   })
 
-  async function open(width: number, resource?: Resource) {
+  async function open(width: number, resource?: Resource, reducedMotion: 'reduce' | 'no-preference' = 'no-preference') {
     const served = resource ?? (await servedResource('/mcp'))
-    const page = await browser.newPage({ viewport: { width: width + 40, height: 1000 } })
+    const page = await browser.newPage({ viewport: { width: width + 40, height: 1000 }, reducedMotion })
     const violations: string[] = []
     page.on('console', (message) => {
       if (/Content Security Policy/i.test(message.text())) violations.push(message.text())
@@ -122,6 +124,9 @@ describe.skipIf(!available)('widget in Chrome for Testing', { timeout: 30_000 },
   const stepperHidden = (frame: Frame) =>
     js<boolean>(frame, `getComputedStyle(document.querySelector('section[aria-labelledby="s-bar"] .stepper')).display === 'none'`)
   const focusedName = (frame: Frame) => js<string>(frame, "document.activeElement.querySelector('h3').textContent")
+  // Whether the widget's key handler took the last key press from the page.
+  const watchKeys = (frame: Frame) => js(frame, "document.addEventListener('keydown', (e) => { window.prevented = e.defaultPrevented })")
+  const prevented = (frame: Frame) => js<boolean>(frame, 'window.prevented')
 
   it('wires the arrow buttons to the carousel and disables them at each end', async () => {
     const { page, frame } = await open(420)
@@ -134,11 +139,37 @@ describe.skipIf(!available)('widget in Chrome for Testing', { timeout: 30_000 },
     await expect.poll(() => scrollLeft(frame)).toBe(second)
     expect(await disabled(frame, -1)).toBe(false)
 
+    await frame.click('section[aria-labelledby="s-bar"] [data-step="-1"]')
+    await expect.poll(() => scrollLeft(frame)).toBe(0)
+
     await frame.focus('#s-bar-list')
     await page.keyboard.press('End')
     await expect.poll(() => disabled(frame, 1)).toBe(true)
     await page.keyboard.press('Home')
     await expect.poll(() => scrollLeft(frame)).toBe(0)
+    await page.close()
+  })
+
+  // Reduced motion makes every scroll instant, so each position can be read right after the key.
+  it('moves one card per arrow key from the list, stops at both ends, and skips smooth scrolling', async () => {
+    const { page, frame } = await open(420, undefined, 'reduce')
+    const lefts = await js<number[]>(frame, "[...document.querySelectorAll('#s-bar-list > li')].map((li, _, all) => li.offsetLeft - all[0].offsetLeft)")
+    await frame.click('section[aria-labelledby="s-bar"] [data-step="1"]')
+    expect(await scrollLeft(frame)).toBe(lefts[1])
+    await frame.focus('#s-bar-list')
+    await page.keyboard.press('ArrowRight')
+    expect(await scrollLeft(frame)).toBe(lefts[2])
+    await page.keyboard.press('ArrowLeft')
+    expect(await scrollLeft(frame)).toBe(lefts[1])
+    await page.keyboard.press('End')
+    const end = await scrollLeft(frame)
+    await expect.poll(() => disabled(frame, 1)).toBe(true)
+    await page.keyboard.press('ArrowRight')
+    expect(await scrollLeft(frame)).toBe(end)
+    await page.keyboard.press('Home')
+    expect(await scrollLeft(frame)).toBe(0)
+    await page.keyboard.press('ArrowLeft')
+    expect(await scrollLeft(frame)).toBe(0)
     await page.close()
   })
 
@@ -162,6 +193,19 @@ describe.skipIf(!available)('widget in Chrome for Testing', { timeout: 30_000 },
     await expect.poll(() => page.evaluate('window.opened')).toEqual([
       'https://fixmeadrinkapp.com/recipes/drink-1',
     ])
+    await page.keyboard.press('Home')
+    await page.keyboard.press('ArrowLeft')
+    expect(await focusedName(frame)).toBe('Drink 0')
+    await page.close()
+  })
+
+  it('leaves other keys to the page: Tab from the list reaches the first card', async () => {
+    const { page, frame } = await open(420)
+    await watchKeys(frame)
+    await frame.focus('#s-bar-list')
+    await page.keyboard.press('Tab')
+    expect(await prevented(frame)).toBe(false)
+    expect(await focusedName(frame)).toBe('Drink 0')
     await page.close()
   })
 
@@ -169,8 +213,10 @@ describe.skipIf(!available)('widget in Chrome for Testing', { timeout: 30_000 },
     const { page, frame } = await open(760)
     expect(await js<number>(frame, "getComputedStyle(document.getElementById('s-bar-list')).gridTemplateColumns.split(' ').length")).toBe(2)
     expect(await stepperHidden(frame)).toBe(true)
+    await watchKeys(frame)
     await frame.focus('#s-bar-list')
     await page.keyboard.press('ArrowRight')
+    expect(await prevented(frame)).toBe(false)
     expect(await scrollLeft(frame)).toBe(0)
     await page.close()
   })

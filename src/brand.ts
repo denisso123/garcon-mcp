@@ -56,7 +56,6 @@ export const TOKENS_CSS = `
     --surface-warning-high-em: #fcbf04; /* surface/warning_high_em */
     --surface-success-base-em-alpha: rgb(80 223 58 / 0.1); /* surface/success_base_em_alpha */
     --surface-warning-base-em-alpha: rgb(253 203 53 / 0.1); /* surface/warning_base_em_alpha */
-    --surface-warning-overlay: #fff5d7; /* code-only: Plus badge on photos */
     --surface-primary-base-em-alpha: rgb(141 122 255 / 0.1); /* surface/primary_base_em_alpha */
 
     /* text */
@@ -68,7 +67,6 @@ export const TOKENS_CSS = `
     --fg-secondary-med-em: #ce00b6; /* text/secondary_med_em: footer "All ..." links */
     --fg-success-high-em: #237e15; /* text/success_high_em: success tags */
     --fg-warning-high-em: #8f6c01; /* text/warning_high_em: warning tags and notes */
-    --fg-warning-overlay: #886702; /* code-only: Plus badge text on warning-overlay */
 
     /* outline */
     --outline-base-em: #f4f4f6; /* outline/base_em: site header rule */
@@ -93,7 +91,6 @@ export const TOKENS_CSS = `
     --space-8xl: 48px; /* spacing/8xl */
 
     /* sizing */
-    --size-icon-xs: 14px; /* sizing/icon/xs: Plus badge star */
     --size-icon-sm: 16px; /* sizing/icon/sm: icon button xs */
     --size-icon-lg: 20px; /* sizing/icon/lg */
     --size-icon-xxl: 24px; /* sizing/icon/xxl */
@@ -147,17 +144,11 @@ export function mascotSvg(className: string) {
 }
 
 /** lucide-react icons as the site renders them (24 grid, stroke 2, round caps), in currentColor. */
-function lucide(className: string, body: string, fill = 'none') {
-  return `<svg class="${className}" viewBox="0 0 24 24" fill="${fill}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`
+function lucide(className: string, body: string) {
+  return `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${body}</svg>`
 }
 
 export const ICONS = {
-  /** lucide Star: the Plus badge's leading icon (plus-badge.tsx), filled. */
-  star: lucide(
-    'star',
-    '<path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"/>',
-    'currentColor'
-  ),
   /** lucide ChevronLeft and ChevronRight, as in the recipe page's servings stepper. */
   chevronLeft: lucide('chevron', '<path d="m15 18-6-6 6-6"/>'),
   chevronRight: lucide('chevron', '<path d="m9 18 6-6-6-6"/>'),

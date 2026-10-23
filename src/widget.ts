@@ -41,7 +41,6 @@ export interface ViewConfig {
   peaceUrl: string
   placeholderUrl: string
   mascot: string
-  star: string
   chevronLeft: string
   chevronRight: string
 }
@@ -75,16 +74,13 @@ function garconView(config) {
     return '<span class="tag' + (tone ? ' ' + tone : '') + '"><span class="tag-label">' + esc(text) + '</span></span>';
   }
 
-  // Source: components/garcon/recipe-card.tsx and plus-badge.tsx. A card
-  // with an unsafe URL renders without a link.
+  // Source: components/garcon/recipe-card.tsx. A card with an unsafe URL
+  // renders without a link.
   function card(item, images) {
     var id = 'g' + (++nextId);
     var url = safeUrl(item && item.url, RECIPE);
     var img = safeUrl(images && images[item.url], IMAGE);
     var name = String((item && item.name) || 'Untitled drink');
-    var plus = item.premium === true
-      ? '<span class="tag plus" id="' + id + '-p">' + config.star + '<span class="tag-label">Plus</span></span>'
-      : '';
     var tags = '';
     if (item.can_make_now) tags += tag('Ready to make', 'ok');
     (item.flavors || []).forEach(function (flavor) { tags += tag(flavor); });
@@ -97,12 +93,12 @@ function garconView(config) {
     var photo = img
       ? '<img class="photo" src="' + esc(img) + '" alt="' + esc(name) + '" loading="lazy" decoding="async">'
       : '<span class="placeholder"><img src="' + esc(config.placeholderUrl) + '" alt="" width="32" height="32"></span>';
-    var body = '<span class="media">' + photo + plus + '</span>' +
+    var body = '<span class="media">' + photo + '</span>' +
       '<span class="body"><h3 class="name" id="' + id + '-n">' + esc(name) + '</h3>' +
       '<span class="details" id="' + id + '-d">' + (tags ? '<span class="tags">' + tags + '</span>' : '') + note + '</span></span>';
     if (!url) return '<li><div class="card">' + body + '</div></li>';
     return '<li><a class="card" href="' + esc(url) + '" data-href="' + esc(url) + '" target="_blank" rel="noopener noreferrer"' +
-      ' aria-labelledby="' + id + '-n' + (plus ? ' ' + id + '-p' : '') + '" aria-describedby="' + id + '-d">' + body + '</a></li>';
+      ' aria-labelledby="' + id + '-n" aria-describedby="' + id + '-d">' + body + '</a></li>';
   }
 
   // Carousel or grid is decided in CSS; garconCarousel handles the keys and
@@ -612,10 +608,6 @@ const WIDGET_CSS = /* css */ `
   }
   .tag-label { padding-inline: var(--space-xxs); }
   .tag.ok { background: var(--c-ok-fill); color: var(--c-ok); }
-  /* components/garcon/plus-badge.tsx, onImage */
-  .tag.plus { position: absolute; left: var(--space-lg); top: var(--space-lg);
-    background: var(--surface-warning-overlay); color: var(--fg-warning-overlay); box-shadow: var(--shadow-e2); }
-  .tag.plus .star { flex: none; width: var(--size-icon-xs); height: var(--size-icon-xs); color: var(--surface-warning-high-em); }
 
   .note-line, .aside, .age {
     font-size: var(--text-caption-2); line-height: var(--leading-caption-2); letter-spacing: var(--tracking-caption-2);
@@ -687,7 +679,6 @@ export function widgetHtml({ brandFonts, assetOrigin = MCP_ORIGIN }: WidgetOptio
     peaceUrl: `${assetOrigin}${IMAGE_FILES.peace}`,
     placeholderUrl: `${assetOrigin}${IMAGE_FILES.placeholder}`,
     mascot: mascotSvg('mark'),
-    star: ICONS.star,
     chevronLeft: ICONS.chevronLeft,
     chevronRight: ICONS.chevronRight,
   }

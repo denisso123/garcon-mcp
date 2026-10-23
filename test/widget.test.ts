@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { TOKENS_CSS } from '../src/brand'
 import { VIEW_JS, type ViewConfig, widgetHtml } from '../src/widget'
 
@@ -10,61 +10,12 @@ interface View {
   error(text: string): string
   cancelled(): string
   summary(result: unknown): string
-  linkHelp(url: string): string
   fromToolResult(result: unknown, args?: unknown): string
-}
-type LinkDeps = {
-  mode: () => string
-  request: (method: string, params: unknown, timeoutMs?: number) => Promise<unknown>
-  openai?: () => unknown
-  open: (url: string) => unknown
 }
 
 // The view runs in the host's iframe as plain script; run the same source here.
-const factory = new Function(
-  `${VIEW_JS}; return { garconView: garconView, garconLinks: garconLinks, garconCarousel: garconCarousel }`
-)() as {
+const factory = new Function(`${VIEW_JS}; return { garconView: garconView }`)() as {
   garconView(config: ViewConfig): View
-  garconLinks(deps: LinkDeps): (url: string) => Promise<'opened' | 'refused' | 'failed'>
-  garconCarousel(scroller: FakeScroller, smooth: boolean): Carousel
-}
-
-interface Carousel {
-  step(direction: number): number
-  onKey(event: { key: string; target: unknown; preventDefault(): void }): boolean
-  state(): { scrollable: boolean; atStart: boolean; atEnd: boolean }
-}
-
-interface FakeCard {
-  parentNode: { offsetLeft: number }
-  focus: ReturnType<typeof vi.fn>
-}
-
-interface FakeScroller {
-  scrollLeft: number
-  clientWidth: number
-  scrollWidth: number
-  querySelectorAll(selector: string): FakeCard[]
-  scrollTo: ReturnType<typeof vi.fn>
-}
-
-/** A carousel list with `count` cards 300 px apart (284 px cards, 16 px gap) in a 400 px viewport. */
-function fakeShelf(count: number, clientWidth = 400): { scroller: FakeScroller; cards: FakeCard[] } {
-  const cards = Array.from({ length: count }, (_, i) => ({ parentNode: { offsetLeft: 16 + i * 300 }, focus: vi.fn() }))
-  const scroller: FakeScroller = {
-    scrollLeft: 0,
-    clientWidth,
-    scrollWidth: 32 + count * 300 - 16,
-    querySelectorAll: () => cards,
-    scrollTo: vi.fn(({ left }: { left: number }) => {
-      scroller.scrollLeft = left
-    }),
-  }
-  return { scroller, cards }
-}
-
-function key(name: string, target: unknown = null) {
-  return { key: name, target, preventDefault: vi.fn() }
 }
 
 const CONFIG: ViewConfig = {
@@ -73,7 +24,6 @@ const CONFIG: ViewConfig = {
   peaceUrl: 'https://mcp.fixmeadrinkapp.com/images/garcon-peace.webp',
   placeholderUrl: 'https://mcp.fixmeadrinkapp.com/images/recipe-placeholder.webp',
   mascot: '<svg class="mark"></svg>',
-  star: '<svg class="star"></svg>',
   chevronLeft: '<svg class="chevron-l"></svg>',
   chevronRight: '<svg class="chevron-r"></svg>',
 }
@@ -142,16 +92,6 @@ describe('widget view', () => {
     expect(
       html.match(/<span class="media"><span class="placeholder"><img src="https:\/\/mcp\.fixmeadrinkapp\.com\/images\/recipe-placeholder\.webp" alt="" width="32" height="32"><\/span><\/span>/g)
     ).toHaveLength(2)
-  })
-
-  it('overlays the Plus badge top left on a premium recipe and names it with the link', () => {
-    const html = view().results(data({ cocktails: [{ ...RICKEY, premium: true }, COLLINS], low_proof_options: [] }), IMAGES)
-    expect(html).toContain(
-      '<span class="media"><img class="photo" src="https://images.fixmeadrinkapp.com/rickey.webp" alt="Gin Rickey" loading="lazy" decoding="async"><span class="tag plus" id="g1-p"><svg class="star"></svg><span class="tag-label">Plus</span></span></span>'
-    )
-    expect(html).toContain('aria-labelledby="g1-n g1-p"')
-    expect(html.match(/class="tag plus"/g)).toHaveLength(1)
-    expect(html).toContain('aria-labelledby="g2-n" aria-describedby="g2-d"')
   })
 
   it('gives each shelf a focusable list and an arrow pair that controls it', () => {
@@ -256,65 +196,7 @@ describe('widget view', () => {
     const ids = [...html.matchAll(/ id="(g\d+-[nd])"/g)].map((m) => m[1])
     expect(ids).toHaveLength(6)
     expect(new Set(ids).size).toBe(6)
-  })
-})
-
-describe('widget links (audit 3, finding 2)', () => {
-  const URL = RICKEY.url
-
-  it('opens through ui/open-link when the host negotiated it', async () => {
-    const request = vi.fn().mockResolvedValue({})
-    const open = vi.fn()
-    expect(await factory.garconLinks({ mode: () => 'bridge', request, open })(URL)).toBe('opened')
-    expect(request).toHaveBeenCalledWith('ui/open-link', { url: URL }, 15000)
-    expect(open).not.toHaveBeenCalled()
-  })
-
-  it('treats a refusal or cancellation as final: nothing else opens the link', async () => {
-    const openExternal = vi.fn()
-    const open = vi.fn()
-    const outcome = await factory.garconLinks({
-      mode: () => 'bridge',
-      request: () => Promise.resolve({ isError: true }),
-      openai: () => ({ openExternal }),
-      open,
-    })(URL)
-    expect(outcome).toBe('refused')
-    expect(openExternal).not.toHaveBeenCalled()
-    expect(open).not.toHaveBeenCalled()
-  })
-
-  it('never opens on its own after a timeout; it reports a failure for the retry and copy offer', async () => {
-    const openExternal = vi.fn()
-    const open = vi.fn()
-    const outcome = await factory.garconLinks({
-      mode: () => 'bridge',
-      request: () => Promise.reject(new Error('timeout')),
-      openai: () => ({ openExternal }),
-      open,
-    })(URL)
-    expect(outcome).toBe('failed')
-    expect(openExternal).not.toHaveBeenCalled()
-    expect(open).not.toHaveBeenCalled()
-  })
-
-  it('uses ChatGPT openExternal or window.open only when that is the negotiated opener', async () => {
-    const request = vi.fn()
-    const openExternal = vi.fn()
-    expect(await factory.garconLinks({ mode: () => 'openai', request, openai: () => ({ openExternal }), open: vi.fn() })(URL)).toBe('opened')
-    expect(openExternal).toHaveBeenCalledWith({ href: URL })
-    expect(request).not.toHaveBeenCalled()
-
-    const open = vi.fn().mockReturnValue(null)
-    expect(await factory.garconLinks({ mode: () => 'window', request, open })(URL)).toBe('failed')
-    expect(await factory.garconLinks({ mode: () => 'none', request, open })(URL)).toBe('failed')
-    expect(request).not.toHaveBeenCalled()
-  })
-
-  it('offers a retry button and the URL to copy', () => {
-    const help = view().linkHelp(URL)
-    expect(help).toContain(`<button type="button" class="retry" data-retry="${URL}">Try again</button>`)
-    expect(help).toContain(`<span class="copy-url">${URL}</span>`)
+    expect(html).toContain('aria-labelledby="g2-n" aria-describedby="g2-d">')
   })
 })
 
@@ -375,65 +257,5 @@ describe('widget view with the tool input', () => {
     )
     expect(html).toContain('Low or zero-proof from your bar</h2>')
     expect(html).not.toContain('Drinks from your bar')
-  })
-})
-
-describe('widget carousel', () => {
-  it('moves one card per arrow key from the list, and Home and End go to the ends', () => {
-    const { scroller } = fakeShelf(5)
-    const carousel = factory.garconCarousel(scroller, false)
-    const right = key('ArrowRight', scroller)
-    expect(carousel.onKey(right)).toBe(true)
-    expect(right.preventDefault).toHaveBeenCalled()
-    expect(scroller.scrollTo).toHaveBeenLastCalledWith({ left: 300, behavior: 'auto' })
-    carousel.onKey(key('ArrowRight', scroller))
-    expect(scroller.scrollLeft).toBe(600)
-    carousel.onKey(key('ArrowLeft', scroller))
-    expect(scroller.scrollLeft).toBe(300)
-    carousel.onKey(key('End', scroller))
-    expect(scroller.scrollLeft).toBe(1200)
-    carousel.onKey(key('ArrowRight', scroller))
-    expect(scroller.scrollLeft).toBe(1200)
-    carousel.onKey(key('Home', scroller))
-    expect(scroller.scrollLeft).toBe(0)
-    carousel.onKey(key('ArrowLeft', scroller))
-    expect(scroller.scrollLeft).toBe(0)
-  })
-
-  it('moves focus with the scroll when a card has focus', () => {
-    const { scroller, cards } = fakeShelf(4)
-    const carousel = factory.garconCarousel(scroller, true)
-    carousel.onKey(key('ArrowRight', cards[1]))
-    expect(cards[2].focus).toHaveBeenCalledWith({ preventScroll: true })
-    expect(scroller.scrollTo).toHaveBeenLastCalledWith({ left: 600, behavior: 'smooth' })
-    carousel.onKey(key('ArrowLeft', cards[0]))
-    expect(cards[0].focus).toHaveBeenCalled()
-  })
-
-  it('leaves other keys alone, and does nothing while the shelf is a grid', () => {
-    const { scroller } = fakeShelf(3)
-    const tab = key('Tab', scroller)
-    expect(factory.garconCarousel(scroller, false).onKey(tab)).toBe(false)
-    expect(tab.preventDefault).not.toHaveBeenCalled()
-
-    const grid = fakeShelf(3, 2000).scroller
-    grid.scrollWidth = 2000
-    const right = key('ArrowRight', grid)
-    expect(factory.garconCarousel(grid, false).onKey(right)).toBe(false)
-    expect(right.preventDefault).not.toHaveBeenCalled()
-    expect(grid.scrollTo).not.toHaveBeenCalled()
-  })
-
-  it('steps for the arrow buttons and reports both ends', () => {
-    const { scroller } = fakeShelf(3)
-    const carousel = factory.garconCarousel(scroller, false)
-    expect(carousel.state()).toEqual({ scrollable: true, atStart: true, atEnd: false })
-    carousel.step(1)
-    carousel.step(1)
-    expect(scroller.scrollLeft).toBe(600)
-    scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth
-    expect(carousel.state()).toMatchObject({ atStart: false, atEnd: true })
-    carousel.step(-1)
-    expect(scroller.scrollLeft).toBe(300)
   })
 })
