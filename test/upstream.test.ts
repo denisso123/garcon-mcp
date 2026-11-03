@@ -18,6 +18,35 @@ function failCatalogue(api: FakeApi, times: number, response: () => Response) {
   api.override('/cocktails?', (request) => (failures++ < times ? response() : api.handleDefault(request)))
 }
 
+describe('upstream service key', () => {
+  it('sends the secret on GET, POST and retry attempts', async () => {
+    const fetchSpy = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('busy', { status: 429, headers: { 'retry-after': '0' } }))
+      .mockResolvedValueOnce(envelope({ ok: true }))
+      .mockResolvedValueOnce(envelope({ ok: true }))
+    vi.stubGlobal('fetch', fetchSpy)
+    const up = upstreamWith({ apiKey: 'mcp-server-secret' })
+    await up.get('/service-key-get', 60)
+    await up.post('/service-key-post', { ingredients: ['Gin'] }, 60)
+    expect(fetchSpy).toHaveBeenCalledTimes(3)
+    for (const [url, init] of fetchSpy.mock.calls) {
+      const headers = new Headers(init?.headers)
+      expect(headers.get('X-Service-Key')).toBe('mcp-server-secret')
+      expect(headers.get('accept')).toBe('application/json')
+      expect(String(url)).not.toContain('mcp-server-secret')
+    }
+    expect(fetchSpy.mock.calls[2][1]?.method).toBe('POST')
+    expect(new Headers(fetchSpy.mock.calls[2][1]?.headers).get('content-type')).toBe('application/json')
+  })
+
+  it.each([undefined, ''])('omits the header when the key is %s', async (apiKey) => {
+    const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(envelope({ ok: true }))
+    vi.stubGlobal('fetch', fetchSpy)
+    await upstreamWith({ apiKey }).get(`/service-key-missing-${String(apiKey)}`, 60)
+    expect(new Headers(fetchSpy.mock.calls[0][1]?.headers).has('X-Service-Key')).toBe(false)
+  })
+})
+
 describe('upstream failures', () => {
   it('waits out a one-second Retry-After on a 429, then retries once', async () => {
     const h = setup(new FakeApi(bourbonBar()), worker)

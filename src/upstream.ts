@@ -20,6 +20,8 @@ interface UpstreamOptions {
   readonly permit: () => Promise<boolean>
   readonly waitUntil: (promise: Promise<unknown>) => void
   readonly baseUrl?: string
+  /** Optional upstream service key. */
+  readonly apiKey?: string
   /** The whole call's deadline. Tests shorten it; production uses 20 s. */
   readonly deadlineMs?: number
   /** One request, body included. Tests shorten it; production uses 8 s. */
@@ -190,6 +192,7 @@ export class Upstream {
   private readonly permit: () => Promise<boolean>
   private readonly waitUntil: (promise: Promise<unknown>) => void
   private readonly baseUrl: string
+  private readonly apiKey: string | undefined
   private readonly deadline: number
   private readonly attemptTimeoutMs: number
   private readonly maxResponseBytes: number
@@ -201,6 +204,7 @@ export class Upstream {
     this.permit = options.permit
     this.waitUntil = options.waitUntil
     this.baseUrl = options.baseUrl ?? API_BASE_URL
+    this.apiKey = options.apiKey
     this.deadline = Date.now() + (options.deadlineMs ?? CALL_DEADLINE_MS)
     this.attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS
     this.maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES
@@ -334,6 +338,7 @@ export class Upstream {
           headers: {
             accept: 'application/json',
             'user-agent': USER_AGENT,
+            ...(this.apiKey ? { 'X-Service-Key': this.apiKey } : {}),
             ...(jsonBody === undefined ? {} : { 'content-type': 'application/json' }),
           },
           body: jsonBody,

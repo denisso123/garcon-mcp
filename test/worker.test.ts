@@ -20,6 +20,23 @@ function toolsCall(id: unknown = 1) {
   }
 }
 
+describe('API service identity', () => {
+  it.each(['/mcp', '/chatgpt/mcp'])('uses the configured secret on %s rather than an incoming header', async (route) => {
+    const original = setup(new FakeApi(bourbonBar()), worker)
+    const h = { ...original, env: { ...original.env, MCP_API_KEY: 'mcp-server-secret' } }
+    const headers: (string | null)[] = []
+    h.api.override('/cocktails', (request) => {
+      headers.push(request.headers.get('X-Service-Key'))
+      return h.api.handleDefault(request)
+    })
+    const response = await post(h, toolsCall(), { route, headers: { 'X-Service-Key': 'caller-supplied' } })
+    expect(response.status).toBe(200)
+    expect(headers.length).toBeGreaterThan(0)
+    expect(headers.every((key) => key === 'mcp-server-secret')).toBe(true)
+    expect(await response.text()).not.toContain('mcp-server-secret')
+  })
+})
+
 describe('protocol eras and routes', () => {
   const cases: [Era, Route][] = [
     ['legacy', '/mcp'],

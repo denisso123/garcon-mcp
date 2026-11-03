@@ -24,6 +24,8 @@ export interface Env {
   readonly OPENAI_APPS_CHALLENGE?: string
   /** Override for tests and staging; defaults to the production API. */
   readonly API_BASE_URL?: string
+  /** Optional upstream service key. */
+  readonly MCP_API_KEY?: string
 }
 
 const ROUTES = new Map<string, HostProfile>([
@@ -174,6 +176,7 @@ async function serveMcp(request: Request, env: Env, ctx: ExecutionContext, profi
     permit: () => allowed(env.UPSTREAM_LIMITER, 'upstream'),
     waitUntil: (promise) => ctx.waitUntil(promise),
     baseUrl: env.API_BASE_URL || undefined,
+    apiKey: env.MCP_API_KEY,
   })
   const handler = createMcpHandler(() => createServer(up, profile), {
     maxRequestBodySize: MAX_BODY_BYTES,

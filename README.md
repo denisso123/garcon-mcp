@@ -61,11 +61,10 @@ Cache TTLs: catalogue 12 h, recipe details, similar lists, glossary and ingredie
 
 ### Upstream budget, honestly
 
-- Rate-limit counters are kept **per Cloudflare location**, not globally. `UPSTREAM_LIMITER` (60 a minute) protects the API from one location only, and Workers egress IPs are shared, so it does not keep the Worker under the API's 1,000 requests per 15 minutes per IP.
+- Rate-limit counters are kept **per Cloudflare location**, not globally. Coordinate the upstream request budget with your API deployment.
 - A cold `find` call can cost up to 40 API requests, the per-call cap (matches, up to 26 recipe details, up to 8 ingredient searches, and three catalogue pages for the low-proof fallback); a warm one costs none. In the local smoke run, five cold calls spent a minute's budget and the next calls answered "busy" until the cache was warm.
 - `openai/subject` is supplied by the caller, so the per-user limit only ever adds to the IP limit. Claude sends no user id, so all Claude users share Anthropic's egress IPs.
 - **The Workers Paid plan is required.** Workers Free allows 50 subrequests (Cache API calls count) and 10 ms of CPU per request; a cold call needs more, and parsing the 2.2 MB catalogue alone exceeds 10 ms.
-- **The backend owner needs to exempt the Worker** from the per-IP limit with a key or allowlist (see SUBMISSION.md, blocker 5). Without it, busy periods will produce "Garçon is handling a lot of requests right now. Try again in a minute."
 
 ## Develop
 
