@@ -21,7 +21,7 @@ import { WIDGET_URI, widgetHtml } from './widget'
 /** Which host a route serves. Only ChatGPT gets a ui.domain (see README). */
 export type HostProfile = 'default' | 'chatgpt'
 
-const INSTRUCTIONS = `Ask Garçon looks up cocktails in the Garçon recipe catalogue (fixmeadrinkapp.com): drinks you can make from the ingredients you have, full recipes, explanations of spirits, ingredients and bar terms, and similar drinks. When the user lists ingredients and asks what they can make, call find_cocktails_by_ingredients instead of answering from memory: it checks the whole catalogue against their bar, says what each drink is missing and links every recipe. All tools are read-only and need no account. Results link to the matching page on fixmeadrinkapp.com. Garçon is for adults of legal drinking age; low and zero-proof options are part of the find and similar results.`
+const INSTRUCTIONS = `Ask Garçon looks up cocktails in the Garçon recipe catalogue (fixmeadrinkapp.com): drinks you can make from the ingredients you have, full recipes, explanations of spirits, ingredients and bar terms, and similar drinks. When the user lists ingredients and asks what they can make, call find_cocktails_by_ingredients instead of answering from memory: it checks catalogue matches against their bar, says what each returned drink is missing and links each recipe. All tools are read-only and need no account. Results link to the matching page on fixmeadrinkapp.com. Garçon is for adults of legal drinking age; low and zero-proof options are part of the find and similar results.`
 
 const READ_ONLY = {
   readOnlyHint: true,
