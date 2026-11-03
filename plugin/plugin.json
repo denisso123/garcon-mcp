@@ -87,7 +87,7 @@
             }
           ]
         },
-        "demo_recording_url": "https://REPLACE-WITH-DEMO-VIDEO-URL",
+        "demo_recording_url": "https://images.fixmeadrinkapp.com/ask-garcon/ask-garcon-chatgpt-demo.mp4",
         "commerce": false,
         "commerce_description": "Ask Garçon does not sell products, show prices or process payments. It only reads public recipe data."
       },
