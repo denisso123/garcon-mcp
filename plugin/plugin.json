@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "ask-garcon",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Find cocktails you can make from the bottles you already own, get full recipes, learn spirits and bar terms, and discover similar drinks, with low and zero-proof options. Recipes come from the Garçon catalogue on fixmeadrinkapp.com.",
   "author": {
     "name": "BLANKPAGE ENTERPRISE S.R.L.",
