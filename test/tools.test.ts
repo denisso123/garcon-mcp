@@ -33,6 +33,21 @@ describe('find_cocktails_by_ingredients', () => {
     expect(text(result).endsWith(AGE_NOTE)).toBe(true)
   })
 
+  it("percent-encodes an apostrophe in a photo URL so the widget accepts it (Buck's Fizz)", async () => {
+    const fizz = recipe('bucks-fizz', ['Orange Juice', 'Brut champagne/sparkling wine'], {
+      strengthLevel: 'Low',
+      imageUrl: "https://images.fixmeadrinkapp.com/cocktail-images/2819-Buck's_Fizz.jpeg",
+    })
+    const h = setup(
+      new FakeApi({ catalogue: [preview(fizz)], recipes: [fizz], matches: { closeMatch: [preview(fizz)] } }),
+      worker
+    )
+    const result = await tool(h, 'find_cocktails_by_ingredients', { ingredients: ['orange juice', 'prosecco'] })
+    expect(result._meta?.images).toEqual({
+      'https://fixmeadrinkapp.com/recipes/bucks-fizz': 'https://images.fixmeadrinkapp.com/cocktail-images/2819-Buck%27s_Fizz.jpeg',
+    })
+  })
+
   it('never lists a drink both as a cocktail and as a low-proof option, and fetches each recipe once', async () => {
     const spritz = recipe('aperol-soda', ['Aperol', 'Soda Water'], { strengthLevel: 'Low' })
     const fizz = recipe('orange-fizz', ['Orange Juice', 'Brut champagne/sparkling wine'], { strengthLevel: 'Low' })

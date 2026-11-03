@@ -239,12 +239,30 @@ function toMatchCard({ candidate, comparison }: Match): MatchCard {
   return card
 }
 
+/**
+ * A photo URL the widget accepts. Catalogue file names can contain an
+ * apostrophe ("2819-Buck's_Fizz.jpeg"), which the widget's URL check refuses
+ * because it is unsafe inside an HTML attribute. The image host serves the
+ * percent-encoded form as the same file, so encode instead of dropping it.
+ */
+export function widgetImageUrl(url: string): string | null {
+  if (!url.startsWith(`${IMAGE_ORIGIN}/`)) return null
+  try {
+    const parsed = new URL(url)
+    if (parsed.origin !== IMAGE_ORIGIN) return null
+    return parsed.href.replace(/'/g, '%27')
+  } catch {
+    return null
+  }
+}
+
 function imagesFor(matches: readonly Match[]) {
-  return Object.fromEntries(
-    matches
-      .filter((match) => match.candidate.preview.imageUrl?.startsWith(IMAGE_ORIGIN))
-      .map((match) => [recipeUrl(slugOf(match.candidate.preview)), match.candidate.preview.imageUrl])
-  )
+  const entries: [string, string][] = []
+  for (const match of matches) {
+    const image = match.candidate.preview.imageUrl && widgetImageUrl(match.candidate.preview.imageUrl)
+    if (image) entries.push([recipeUrl(slugOf(match.candidate.preview)), image])
+  }
+  return Object.fromEntries(entries)
 }
 
 export async function findCocktails(up: Upstream, args: FindArgs): Promise<ToolOutput<FindOutput>> {

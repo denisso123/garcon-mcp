@@ -308,3 +308,18 @@ describe('deadlines with real timers', () => {
     await expect(up.get('/settled-once', 60)).rejects.toThrow(/too slow/)
   })
 })
+
+describe('widget image URLs', () => {
+  it('encodes apostrophes, keeps other image URLs, refuses other hosts', async () => {
+    const { widgetImageUrl } = await import('../src/service')
+    expect(widgetImageUrl("https://images.fixmeadrinkapp.com/cocktail-images/2819-Buck's_Fizz.jpeg")).toBe(
+      'https://images.fixmeadrinkapp.com/cocktail-images/2819-Buck%27s_Fizz.jpeg'
+    )
+    expect(widgetImageUrl('https://images.fixmeadrinkapp.com/cocktail-images/5049-Cucumber_&_Mint_Seltz.jpeg')).toBe(
+      'https://images.fixmeadrinkapp.com/cocktail-images/5049-Cucumber_&_Mint_Seltz.jpeg'
+    )
+    expect(widgetImageUrl('https://images.fixmeadrinkapp.com/a b.jpeg')).toBe('https://images.fixmeadrinkapp.com/a%20b.jpeg')
+    expect(widgetImageUrl('https://images.fixmeadrinkapp.com.evil.test/x.jpeg')).toBeNull()
+    expect(widgetImageUrl('https://example.com/x.jpeg')).toBeNull()
+  })
+})

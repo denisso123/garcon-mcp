@@ -49,6 +49,9 @@ describe('protocol eras and routes', () => {
     const h = setup(new FakeApi(bourbonBar()), worker)
     const client = await connect(h, era, route)
 
+    expect(client.serverInfo()?.icons).toEqual([
+      { src: 'https://mcp.fixmeadrinkapp.com/images/ask-garcon-icon.png', mimeType: 'image/png', sizes: ['128x128'] },
+    ])
     const { tools } = await client.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual([
       'explain_bar_term',

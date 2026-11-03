@@ -7,6 +7,8 @@ export const MCP_ORIGIN = 'https://mcp.fixmeadrinkapp.com'
 export const IMAGE_ORIGIN = 'https://images.fixmeadrinkapp.com'
 
 export const PRIVACY_URL = `${MCP_ORIGIN}/privacy`
+/** Same file as plugin/assets/icon.png (128 x 128 PNG), served as a static asset. */
+export const APP_ICON_URL = `${MCP_ORIGIN}/images/ask-garcon-icon.png`
 export const SITE_PRIVACY_URL = `${SITE_URL}/privacy-policy`
 export const TERMS_URL = `${SITE_URL}/terms-of-service`
 export const SUPPORT_URL = `${SITE_URL}/support`

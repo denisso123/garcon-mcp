@@ -178,6 +178,7 @@ export type Era = 'legacy' | 'modern'
 export interface Connected {
   readonly era: Era
   readonly protocolHeaders: string[]
+  serverInfo(): { name: string; icons?: { src: string; mimeType?: string; sizes?: string[] }[] } | undefined
   listTools(): Promise<{ tools: { name: string; title?: string; annotations?: unknown; _meta?: Record<string, unknown>; inputSchema: unknown; outputSchema?: unknown }[] }>
   callTool(name: string, args: Record<string, unknown>): Promise<ToolResult>
   readResource(uri: string): Promise<{ contents: { uri: string; mimeType?: string; text?: string; _meta?: Record<string, unknown> }[] }>
@@ -207,6 +208,7 @@ export async function connect(h: Harness, era: Era, route: Route = '/mcp'): Prom
     return {
       era,
       protocolHeaders,
+      serverInfo: () => client.getServerVersion() as ReturnType<Connected['serverInfo']>,
       listTools: () => client.listTools() as ReturnType<Connected['listTools']>,
       callTool: (name, args) => client.callTool({ name, arguments: args }) as Promise<ToolResult>,
       readResource: (uri) => client.readResource({ uri }) as ReturnType<Connected['readResource']>,
@@ -221,6 +223,7 @@ export async function connect(h: Harness, era: Era, route: Route = '/mcp'): Prom
   return {
     era,
     protocolHeaders,
+    serverInfo: () => client.getServerVersion() as ReturnType<Connected['serverInfo']>,
     listTools: () => client.listTools() as ReturnType<Connected['listTools']>,
     callTool: (name, args) => client.callTool({ name, arguments: args }) as Promise<ToolResult>,
     readResource: (uri) => client.readResource({ uri }) as ReturnType<Connected['readResource']>,
