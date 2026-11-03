@@ -21,7 +21,7 @@ import { WIDGET_URI, widgetHtml } from './widget'
 /** Which host a route serves. Only ChatGPT gets a ui.domain (see README). */
 export type HostProfile = 'default' | 'chatgpt'
 
-const INSTRUCTIONS = `Ask Garçon looks up cocktails in the Garçon recipe catalogue (fixmeadrinkapp.com): drinks you can make from the ingredients you have, full recipes, explanations of spirits, ingredients and bar terms, and similar drinks. All tools are read-only and need no account. Results link to the matching page on fixmeadrinkapp.com. Garçon is for adults of legal drinking age; low and zero-proof options are part of the find and similar results.`
+const INSTRUCTIONS = `Ask Garçon looks up cocktails in the Garçon recipe catalogue (fixmeadrinkapp.com): drinks you can make from the ingredients you have, full recipes, explanations of spirits, ingredients and bar terms, and similar drinks. When the user lists ingredients and asks what they can make, call find_cocktails_by_ingredients instead of answering from memory: it checks catalogue matches against their bar, says what each returned drink is missing and links each recipe. All tools are read-only and need no account. Results link to the matching page on fixmeadrinkapp.com. Garçon is for adults of legal drinking age; low and zero-proof options are part of the find and similar results.`
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -112,8 +112,10 @@ export function createServer(up: Upstream, profile: HostProfile = 'default') {
     {
       title: 'Find cocktails from your ingredients',
       description:
-        'Finds cocktails the user can make from the bottles and ingredients they already have, using the Garçon recipe catalogue. ' +
-        'Use it when the user lists what is in their bar, fridge or cabinet and asks what they can make. ' +
+        'Use this when the user names ingredients or bottles they have and asks what cocktails, drinks or mocktails they can make with them, ' +
+        'for example "What can I make with gin, lime and soda?" or "I have rum and pineapple juice, any ideas?". ' +
+        'Checks their ingredients against the Garçon recipe catalogue on fixmeadrinkapp.com. ' +
+        'Do not use it for one named drink (use get_cocktail_recipe) or for drinks like one they name (use suggest_similar_cocktail). ' +
         'Returns up to 8 free recipes ranked by fewest missing ingredients, each with what they have, what is missing and its fixmeadrinkapp.com page, plus up to 2 low or zero-proof options. ' +
         'A word that could mean several bottles, such as "vermouth", is never assumed: drinks that need one kind list it under depends_on, so ask the user which bottle they have when it matters. ' +
         'partial: true means the per-call lookup budget ran out before every candidate was ranked. ' +
@@ -153,8 +155,9 @@ export function createServer(up: Upstream, profile: HostProfile = 'default') {
     {
       title: 'Get a cocktail recipe',
       description:
-        'Gets one cocktail recipe from the Garçon catalogue by name or recipe slug: description, glass, ice, garnish, ingredient amounts (oz with ml), steps, strength and its fixmeadrinkapp.com page. ' +
-        'Use it when the user asks how to make a specific drink. For premium recipes the ingredient list is not public; the result says so and lists free recipes like it. ' +
+        'Use this when the user asks how to make a specific cocktail they name, or wants its ingredients or steps, for example "How do I make an Espresso Martini?". ' +
+        'Gets that recipe from the Garçon catalogue by name, slug or fixmeadrinkapp.com recipe URL: description, glass, ice, garnish, ingredient amounts (oz with ml), steps, strength and its fixmeadrinkapp.com page. ' +
+        'Do not use it when the user lists ingredients and asks what they can make (use find_cocktails_by_ingredients). For premium recipes the ingredient list is not public; the result says so and lists free recipes like it. ' +
         'Recipes are for adults of legal drinking age. It does not give health or nutrition advice.',
       inputSchema: z.strictObject({
         name: z
@@ -179,9 +182,10 @@ export function createServer(up: Upstream, profile: HostProfile = 'default') {
     {
       title: 'Explain a spirit, ingredient or bar term',
       description:
-        'Explains a spirit, liqueur, mixer or other cocktail ingredient (taste, what it is made from, typical ABV, styles, substitutes including zero-proof ones, cocktails that use it), ' +
-        'or a bar term such as a technique, glass, tool or drink style (definition, how-to steps, related terms). ' +
-        'Use it when the user asks what something is or how a technique works. Returns the matching fixmeadrinkapp.com ingredient or glossary page. It does not give health or nutrition advice.',
+        'Use this when the user asks what a spirit, liqueur, mixer or other cocktail ingredient is, what to use instead of one, or what a bar term means or how a technique works, ' +
+        'for example "What is mezcal?" or "How do I dry shake?". ' +
+        'Covers ingredients (taste, what it is made from, typical ABV, styles, substitutes including zero-proof ones, cocktails that use it) ' +
+        'and bar terms such as a technique, glass, tool or drink style (definition, how-to steps, related terms). Returns the matching fixmeadrinkapp.com ingredient or glossary page. It does not give health or nutrition advice.',
       inputSchema: z.strictObject({
         term: z
           .string()
@@ -205,9 +209,9 @@ export function createServer(up: Upstream, profile: HostProfile = 'default') {
     {
       title: 'Suggest similar cocktails',
       description:
-        'Suggests cocktails similar to one the user names, from the Garçon catalogue, with each drink\'s strength, flavours and fixmeadrinkapp.com page. ' +
-        'Adds low or zero-proof options that share its flavours or base spirit; set low_proof to true to get only low and zero-proof alternatives. ' +
-        'Use it when the user liked a drink and wants something like it, or wants a lighter version. Drinks are for adults of legal drinking age.',
+        'Use this when the user names a drink they like and wants something similar, or a lighter or alcohol-free version of it, for example "Something like a Moscow Mule?". ' +
+        'Suggests cocktails similar to that one from the Garçon catalogue, with each drink\'s strength, flavours and fixmeadrinkapp.com page, ' +
+        'plus low or zero-proof options that share its flavours or base spirit; set low_proof to true to get only low and zero-proof alternatives. Drinks are for adults of legal drinking age.',
       inputSchema: z.strictObject({
         name: z.string().trim().min(1).max(120).describe('The cocktail to match, e.g. "Negroni"'),
         low_proof: z.boolean().optional().describe('True to suggest only low and zero-proof drinks'),
