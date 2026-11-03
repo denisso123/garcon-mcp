@@ -14,7 +14,7 @@ import {
   getRecipe,
   suggestSimilar,
 } from './service'
-import { AGE_NOTE, IMAGE_ORIGIN, MCP_ORIGIN, SERVER_NAME, SERVER_TITLE, SERVER_VERSION, SITE_URL } from './site'
+import { AGE_NOTE, APP_ICON_URL, IMAGE_ORIGIN, MCP_ORIGIN, SERVER_NAME, SERVER_TITLE, SERVER_VERSION, SITE_URL } from './site'
 import { UpstreamError, type Upstream } from './upstream'
 import { WIDGET_URI, widgetHtml } from './widget'
 
@@ -86,7 +86,14 @@ function widgetResourceMeta(profile: HostProfile) {
 
 export function createServer(up: Upstream, profile: HostProfile = 'default') {
   const server = new McpServer(
-    { name: SERVER_NAME, title: SERVER_TITLE, version: SERVER_VERSION, websiteUrl: SITE_URL },
+    {
+      name: SERVER_NAME,
+      title: SERVER_TITLE,
+      version: SERVER_VERSION,
+      websiteUrl: SITE_URL,
+      // MCP 2025-11-25 server icon, for hosts that read it from serverInfo.
+      icons: [{ src: APP_ICON_URL, mimeType: 'image/png', sizes: ['128x128'] }],
+    },
     { instructions: INSTRUCTIONS }
   )
 
