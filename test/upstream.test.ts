@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from '../src/index'
 import { bourbonBar } from './data'
 import { type CacheLike, Upstream, UpstreamError } from '../src/upstream'
+import { cataloguePages } from '../src/service'
 import { FakeApi, FakeCache, envelope, erroredBody, setup, text, tool } from './harness'
 
 afterEach(() => {
@@ -77,11 +78,59 @@ describe('upstream failures', () => {
   })
 
   it('caps the API requests one call can make', async () => {
+    const fetchSpy = vi.fn(async () => Response.json({ success: true, responseObject: { ok: true } }))
+    vi.stubGlobal('fetch', fetchSpy)
+    const up = upstreamWith()
+    const outcomes = await Promise.allSettled(Array.from({ length: 41 }, (_, i) => up.get(`/budget/${i}`, 60)))
+    expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(40)
+    const refused = outcomes.find((o) => o.status === 'rejected') as PromiseRejectedResult
+    expect(String(refused.reason)).toMatch(/more catalogue lookups than one answer allows/)
+    expect(fetchSpy).toHaveBeenCalledTimes(40)
+  })
+
+  it('loads at most 10 catalogue pages, whatever totalPages says', async () => {
     const h = setup(new FakeApi(bourbonBar()), worker)
-    h.api.override('/cocktails?', () => envelope({ cocktails: [], totalPages: 60, total: 0 }))
-    const result = await tool(h, 'get_cocktail_recipe', RECIPE)
-    expect(text(result)).toMatch(/more catalogue lookups than one answer allows/)
-    expect(h.api.calls.length).toBe(40)
+    h.api.override('/cocktails?', () => envelope({ cocktails: [], totalPages: 1_000_000_000, total: 0 }))
+    await tool(h, 'get_cocktail_recipe', RECIPE)
+    expect(h.api.callsTo('/cocktails?')).toHaveLength(10)
+  })
+
+  it('reads a missing or malformed totalPages as one page', () => {
+    for (const value of [undefined, null, '3', 0, -2, 2.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(cataloguePages(value)).toBe(1)
+    }
+    expect(cataloguePages(3)).toBe(3)
+    expect(cataloguePages(60)).toBe(10)
+  })
+
+  it('refuses an answer body over the byte cap, without retrying', async () => {
+    const big = JSON.stringify({ success: true, responseObject: { pad: 'x'.repeat(200) } })
+    const fetchSpy = vi.fn(async () => new Response(big, { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+    await expect(upstreamWith({ maxResponseBytes: 100 }).get('/big', 60)).rejects.toThrow(/not answering right now/)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses a declared content-length over the byte cap before reading the body', async () => {
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-length': '5000' } }))
+    vi.stubGlobal('fetch', fetchSpy)
+    await expect(upstreamWith({ maxResponseBytes: 100 }).get('/declared', 60)).rejects.toThrow(/not answering/)
+  })
+
+  it('accepts a body at the byte cap, split across chunks', async () => {
+    const body = JSON.stringify({ success: true, responseObject: { name: 'Négroni' } })
+    const bytes = new TextEncoder().encode(body)
+    vi.stubGlobal('fetch', async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes.slice(0, 7))
+          controller.enqueue(bytes.slice(7))
+          controller.close()
+        },
+      })
+      return new Response(stream, { status: 200 })
+    })
+    expect(await upstreamWith({ maxResponseBytes: bytes.byteLength }).get('/exact', 60)).toEqual({ name: 'Négroni' })
   })
 })
 

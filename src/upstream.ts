@@ -24,6 +24,8 @@ interface UpstreamOptions {
   readonly deadlineMs?: number
   /** One request, body included. Tests shorten it; production uses 8 s. */
   readonly attemptTimeoutMs?: number
+  /** Largest answer body accepted. Tests shrink it; production uses 8 MiB. */
+  readonly maxResponseBytes?: number
 }
 
 // Bump when the shape of cached values changes.
@@ -39,6 +41,7 @@ const MAX_ATTEMPTS = 2
 const ATTEMPT_TIMEOUT_MS = 8_000
 const CALL_DEADLINE_MS = 20_000
 const MAX_RETRY_WAIT_MS = 2_000
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 const USER_AGENT = 'garcon-mcp/1.0 (+https://fixmeadrinkapp.com)'
 
 const BUSY = 'Garçon is handling a lot of requests right now. Try again in a minute.'
@@ -121,6 +124,35 @@ function backoffMs() {
   return 250 + Math.random() * 250
 }
 
+/**
+ * The body as text, refused once it passes `maxBytes`. A catalogue page is
+ * about 0.75 MB today, so the cap only stops a malformed or runaway answer.
+ */
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
+  if (Number(response.headers.get('content-length')) > maxBytes) throw new UpstreamError(UNAVAILABLE)
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > maxBytes) {
+      reader.cancel().catch(() => undefined)
+      throw new UpstreamError(UNAVAILABLE)
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
 /** The API wraps every answer as { success, responseObject }. */
 function unwrap<T>(text: string): T | null {
   let body: { success?: unknown; responseObject?: T }
@@ -144,6 +176,7 @@ export class Upstream {
   private readonly baseUrl: string
   private readonly deadline: number
   private readonly attemptTimeoutMs: number
+  private readonly maxResponseBytes: number
   private readonly inflight = new Map<string, Promise<unknown>>()
   private requests = 0
 
@@ -154,6 +187,7 @@ export class Upstream {
     this.baseUrl = options.baseUrl ?? API_BASE_URL
     this.deadline = Date.now() + (options.deadlineMs ?? CALL_DEADLINE_MS)
     this.attemptTimeoutMs = options.attemptTimeoutMs ?? ATTEMPT_TIMEOUT_MS
+    this.maxResponseBytes = options.maxResponseBytes ?? MAX_RESPONSE_BYTES
   }
 
   /** GET an API path. Null when the API answers 404 or 400. */
@@ -291,7 +325,10 @@ export class Upstream {
         }),
         signal
       )
-      if (response.ok) return { ok: true, value: unwrap<T>(await untilAborted(response.text(), signal)) }
+      if (response.ok) {
+        const body = await untilAborted(readCapped(response, this.maxResponseBytes), signal)
+        return { ok: true, value: unwrap<T>(body) }
+      }
     } catch (error) {
       if (error instanceof UpstreamError) throw error
       if (response) discardBody(response)

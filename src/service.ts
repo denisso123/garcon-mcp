@@ -45,6 +45,8 @@ const DAY = 86_400
 const HOUR = 3_600
 const CATALOGUE_TTL = 12 * HOUR
 const CATALOGUE_PAGE_SIZE = 2000
+// The live catalogue has 3 pages (Nov 2026); 10 leaves room to grow.
+const MAX_CATALOGUE_PAGES = 10
 
 const MAX_TERMS = 25
 const MAX_SEARCHES = 8
@@ -63,13 +65,22 @@ export interface ToolOutput<T> {
   readonly meta?: Record<string, unknown>
 }
 
+/**
+ * Pages to load, from the API's own count. A missing or malformed count means
+ * one page; a count above the ceiling loads only the most popular pages.
+ */
+export function cataloguePages(totalPages: unknown): number {
+  if (typeof totalPages !== 'number' || !Number.isInteger(totalPages) || totalPages < 1) return 1
+  return Math.min(totalPages, MAX_CATALOGUE_PAGES)
+}
+
 async function loadCatalogue(up: Upstream): Promise<RawPreview[]> {
   const path = (page: number) =>
     `/cocktails?page=${page}&pageSize=${CATALOGUE_PAGE_SIZE}&sortBy=popularityScore&sortOrder=desc`
   const first = await up.get<RawRecipeList>(path(1), CATALOGUE_TTL)
   if (!first) return []
   const rest = await Promise.all(
-    Array.from({ length: Math.max(0, (first.totalPages ?? 1) - 1) }, (_, i) =>
+    Array.from({ length: cataloguePages(first.totalPages) - 1 }, (_, i) =>
       up.get<RawRecipeList>(path(i + 2), CATALOGUE_TTL)
     )
   )
