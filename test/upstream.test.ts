@@ -323,3 +323,80 @@ describe('widget image URLs', () => {
     expect(widgetImageUrl('https://example.com/x.jpeg')).toBeNull()
   })
 })
+
+describe('upstream redirects and the service key', () => {
+  const KEY = 'dummy-redirect-key'
+  const keyOf = (init?: RequestInit) => new Headers(init?.headers).get('X-Service-Key')
+
+  function stubFetch(routes: Record<string, () => Response>) {
+    const calls: { url: string; key: string | null; redirect?: string; method?: string }[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      calls.push({ url, key: keyOf(init), redirect: init?.redirect, method: init?.method })
+      const route = routes[url]
+      return route ? route() : new Response('not found', { status: 404 })
+    })
+    return calls
+  }
+  const up = () => new Upstream({ cache: null, permit: async () => true, waitUntil: () => {}, baseUrl: 'https://api.redirect.test/api/v1', apiKey: KEY })
+  const redirect = (status: number, location: string) => () => new Response(null, { status, headers: { location } })
+
+  it('follows a same-origin redirect and keeps the key on that hop', async () => {
+    const calls = stubFetch({
+      'https://api.redirect.test/api/v1/old': redirect(301, '/api/v1/new'),
+      'https://api.redirect.test/api/v1/new': () => Response.json({ success: true, responseObject: { moved: true } }),
+    })
+    expect(await up().get('/old', 60)).toEqual({ moved: true })
+    expect(calls.map((c) => [c.url, c.key, c.redirect])).toEqual([
+      ['https://api.redirect.test/api/v1/old', KEY, 'manual'],
+      ['https://api.redirect.test/api/v1/new', KEY, 'manual'],
+    ])
+  })
+
+  it('does not follow a cross-origin redirect and sends nothing to the other host', async () => {
+    const calls = stubFetch({
+      'https://api.redirect.test/api/v1/leak': redirect(302, 'https://elsewhere.test/collect'),
+      'https://elsewhere.test/collect': () => Response.json({ success: true, responseObject: { leaked: true } }),
+    })
+    await expect(up().get('/leak', 60)).rejects.toThrow(/not answering right now/)
+    expect(calls.map((c) => c.url)).toEqual(['https://api.redirect.test/api/v1/leak'])
+  })
+
+  it('treats a redirect to the same host on another scheme or port as cross-origin', async () => {
+    const calls = stubFetch({ 'https://api.redirect.test/api/v1/port': redirect(307, 'https://api.redirect.test:8443/api/v1/port') })
+    await expect(up().get('/port', 60)).rejects.toThrow(/not answering right now/)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('stops after 3 same-origin redirects', async () => {
+    const calls = stubFetch({
+      'https://api.redirect.test/api/v1/a': redirect(302, '/api/v1/b'),
+      'https://api.redirect.test/api/v1/b': redirect(302, '/api/v1/c'),
+      'https://api.redirect.test/api/v1/c': redirect(302, '/api/v1/d'),
+      'https://api.redirect.test/api/v1/d': redirect(302, '/api/v1/e'),
+      'https://api.redirect.test/api/v1/e': () => Response.json({ success: true, responseObject: { far: true } }),
+    })
+    await expect(up().get('/a', 60)).rejects.toThrow(/not answering right now/)
+    expect(calls).toHaveLength(4)
+  })
+
+  it('accepts 3 same-origin redirects', async () => {
+    stubFetch({
+      'https://api.redirect.test/api/v1/a': redirect(302, '/api/v1/b'),
+      'https://api.redirect.test/api/v1/b': redirect(302, '/api/v1/c'),
+      'https://api.redirect.test/api/v1/c': redirect(302, '/api/v1/d'),
+      'https://api.redirect.test/api/v1/d': () => Response.json({ success: true, responseObject: { ok: 3 } }),
+    })
+    expect(await up().get('/a', 60)).toEqual({ ok: 3 })
+  })
+
+  it('keeps method and body on a same-origin 307 for POST lookups', async () => {
+    const calls = stubFetch({
+      'https://api.redirect.test/api/v1/match': redirect(307, '/api/v1/match2'),
+      'https://api.redirect.test/api/v1/match2': () => Response.json({ success: true, responseObject: { posted: true } }),
+    })
+    expect(await up().post('/match', { a: 1 }, 60)).toEqual({ posted: true })
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'POST'])
+  })
+
+})

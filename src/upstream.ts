@@ -44,6 +44,8 @@ const ATTEMPT_TIMEOUT_MS = 8_000
 const CALL_DEADLINE_MS = 20_000
 const MAX_RETRY_WAIT_MS = 2_000
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+const MAX_REDIRECTS = 3
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 const USER_AGENT = 'garcon-mcp/1.0 (+https://fixmeadrinkapp.com)'
 
 const BUSY = 'Garçon is handling a lot of requests right now. Try again in a minute.'
@@ -322,6 +324,50 @@ export class Upstream {
   }
 
   /**
+   * fetch with redirects handled here, not by the runtime: Workers forwards
+   * custom headers such as X-Service-Key across origins when it follows a
+   * redirect itself. Only redirects to the configured API origin are followed,
+   * at most MAX_REDIRECTS hops, and only those hops carry the key. A redirect
+   * anywhere else is an upstream error and nothing is sent there.
+   */
+  private async send(url: string, jsonBody: string | undefined, signal: AbortSignal): Promise<Response> {
+    const apiOrigin = new URL(this.baseUrl).origin
+    let current = new URL(url)
+    let method = jsonBody === undefined ? 'GET' : 'POST'
+    let body = jsonBody
+    for (let hop = 0; ; hop++) {
+      const response = await fetch(current.href, {
+        method,
+        headers: {
+          accept: 'application/json',
+          'user-agent': USER_AGENT,
+          ...(this.apiKey ? { 'X-Service-Key': this.apiKey } : {}),
+          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        },
+        body,
+        redirect: 'manual',
+        signal,
+      })
+      const location = REDIRECT_STATUSES.has(response.status) ? response.headers.get('location') : null
+      if (location === null) return response
+      discardBody(response)
+      let next: URL
+      try {
+        next = new URL(location, current)
+      } catch {
+        throw new UpstreamError(UNAVAILABLE)
+      }
+      if (next.origin !== apiOrigin || hop >= MAX_REDIRECTS) throw new UpstreamError(UNAVAILABLE)
+      // 307 and 308 keep the method and body; the others become a plain GET, as fetch does.
+      if (response.status !== 307 && response.status !== 308) {
+        method = 'GET'
+        body = undefined
+      }
+      current = next
+    }
+  }
+
+  /**
    * One request inside the attempt timeout and the call deadline. The same
    * signal bounds the body read, which a stalled stream would otherwise hold
    * open. The status decides the outcome; cleaning up the body never does.
@@ -332,20 +378,7 @@ export class Upstream {
     const signal = AbortSignal.timeout(Math.min(this.attemptTimeoutMs, remaining))
     let response: Response | undefined
     try {
-      response = await untilAborted(
-        fetch(`${this.baseUrl}${path}`, {
-          method: jsonBody === undefined ? 'GET' : 'POST',
-          headers: {
-            accept: 'application/json',
-            'user-agent': USER_AGENT,
-            ...(this.apiKey ? { 'X-Service-Key': this.apiKey } : {}),
-            ...(jsonBody === undefined ? {} : { 'content-type': 'application/json' }),
-          },
-          body: jsonBody,
-          signal,
-        }),
-        signal
-      )
+      response = await untilAborted(this.send(`${this.baseUrl}${path}`, jsonBody, signal), signal)
       if (response.ok) {
         const body = await untilAborted(readCapped(response, this.maxResponseBytes), signal)
         return { ok: true, value: unwrap<T>(body) }
