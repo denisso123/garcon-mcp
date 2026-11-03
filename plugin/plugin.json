@@ -15,9 +15,9 @@
       "interface": {
         "displayName": "Ask Garçon",
         "shortDescription": "Cocktails from your own bar",
-        "longDescription": "Drinks from the bottles you already own.\n\nTell Ask Garçon what is on your shelf and it finds cocktails you can make now, plus the ones you are one bottle away from, ranked by what is missing. It also gives full recipes with amounts in oz and ml, glass, ice, garnish and steps; explains spirits, liqueurs, mixers, techniques and glassware in plain words, with substitutes; and suggests drinks like one you already enjoy.\n\nEvery answer includes low and zero-proof options, and you can ask for mocktails and low-ABV drinks only. Each result links to its recipe, ingredient or glossary page on fixmeadrinkapp.com.\n\nAsk Garçon reads from the free part of the Garçon recipe catalogue. It needs no account, does not store what you ask, and makes no health or nutrition claims. Some recipes in the catalogue are premium: for those it shows the description and free recipes like it. For adults of legal drinking age.",
+        "longDescription": "Drinks from the bottles you already own.\n\nTell Ask Garçon what is on your shelf and it finds cocktails you can make now, plus the ones you are one bottle away from, ranked by what is missing. It also gives full recipes with amounts in oz and ml, glass, ice, garnish and steps; explains spirits, liqueurs, mixers, techniques and glassware in plain words, with substitutes; and suggests drinks like one you already enjoy.\n\nIngredient searches and similar-drink suggestions include low and zero-proof options when available. You can also request only low and zero-proof drinks. Each result links to its recipe, ingredient or glossary page on fixmeadrinkapp.com.\n\nAsk Garçon reads from the Garçon recipe catalogue on fixmeadrinkapp.com. It needs no account, does not store what you ask, and makes no health or nutrition claims. For adults of legal drinking age.",
         "developerName": "BLANKPAGE ENTERPRISE S.R.L.",
-        "category": "Lifestyle",
+        "category": "Entertainment",
         "capabilities": [
           "Find cocktails from your ingredients",
           "Get a cocktail recipe",
@@ -87,7 +87,7 @@
             }
           ]
         },
-        "demo_recording_url": "https://REPLACE-WITH-DEMO-VIDEO-URL",
+        "demo_recording_url": "https://images.fixmeadrinkapp.com/ask-garcon/ask-garcon-chatgpt-demo.mp4",
         "commerce": false,
         "commerce_description": "Ask Garçon does not sell products, show prices or process payments. It only reads public recipe data."
       },

@@ -19,7 +19,7 @@ Four read-only tools. All four carry `readOnlyHint: true`, `destructiveHint: fal
 | `explain_bar_term` | "What is mezcal?", "How do I dry shake?" | Ingredient page (taste, made from, ABV range, styles, substitutes incl. zero-proof, example drinks) or glossary term (definition, facts, how-to steps, related terms), with URL. |
 | `suggest_similar_cocktail` | "Something like a Moscow Mule." `low_proof: true` for lighter drinks only. | Similar drinks (free recipes first, premium flagged) plus low or zero-proof options that share its flavours. |
 
-Responsible-drinking posture: tool descriptions and the server instructions say the drinks are for adults of legal drinking age; find and similar always include low or zero-proof options; no tool gives health or nutrition advice (calorie data from the API is deliberately not returned). Every successful text result ends with "For adults of legal drinking age. Please drink responsibly." (tool errors do not).
+Responsible-drinking posture: tool descriptions and the server instructions say the drinks are for adults of legal drinking age; find and similar include low or zero-proof options when available; no tool gives health or nutrition advice (calorie data from the API is deliberately not returned). Every successful text result ends with "For adults of legal drinking age. Please drink responsibly." (tool errors do not).
 
 ## Routes
 
