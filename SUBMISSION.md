@@ -153,7 +153,7 @@ Open https://claude.ai/directory/manage → **Submit new** → **MCP connector**
    - Description (≤2000):
      > Tell Claude what is on your shelf and Ask Garçon finds cocktails you can make now, plus the ones you are one bottle away from, ranked by what is missing. It gives full recipes with amounts in oz and ml, glass, ice, garnish and steps; explains spirits, liqueurs, mixers, techniques and glassware in plain words, with substitutes; and suggests drinks like one you already enjoy.
      >
-     > Every answer includes low and zero-proof options, and you can ask for mocktails and low-ABV drinks only. Each result links to its recipe, ingredient or glossary page on fixmeadrinkapp.com.
+     > Ingredient searches and similar-drink suggestions include low and zero-proof options when available. You can also request only low and zero-proof drinks. Each result links to its recipe, ingredient or glossary page on fixmeadrinkapp.com.
      >
      > Ask Garçon reads from the free part of the Garçon recipe catalogue, built by the team behind the Garçon iOS app. It is read-only, needs no account, does not store what you ask, and makes no health or nutrition claims. For premium recipes it shows the description and free recipes like it. For adults of legal drinking age.
    - Categories (1 to 5): pick the closest of the portal's list, for example Lifestyle and Food & Drink.
