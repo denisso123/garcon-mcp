@@ -1,0 +1,302 @@
+[
+ {
+  "id": "f7551406-65b5-465f-ac7c-000de4148b78",
+  "name": "Dry gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "dry-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/dry-gin.png?v=d904cb9ff9f5",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "1e31f747-2f64-4861-a67c-bf8097017269",
+  "name": "Sloe gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "sloe-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/sloe-gin.png?v=a2d820d1f365",
+  "pageId": "747e6ecc-49ca-4a7a-a6dd-9b72ef130c35",
+  "isSavedByUser": false
+ },
+ {
+  "id": "74126879-323c-4e0e-8805-e0e62ca696f8",
+  "name": "Aged gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "aged-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/aged-gin.png?v=614aa8114e9d",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "bd432c70-30c3-4452-aa5d-c1e5499ff247",
+  "name": "Ginger",
+  "category": "Flavored Syrups",
+  "groupCategory": "Syrups & Sweeteners",
+  "slug": "ginger",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger.png?v=54fd5ee28b64",
+  "pageId": "638d4104-4e0d-4c35-8995-d6919bcedab1",
+  "isSavedByUser": false
+ },
+ {
+  "id": "2001321a-cd69-4c97-aa06-f1653cf2853c",
+  "name": "Spiced gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "spiced-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/spiced-gin.png?v=d6ec36770655",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "c7483ff1-9e07-4efd-a338-514152109318",
+  "name": "Old Tom gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "old-tom-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/old-tom-gin.png?v=858e395118bb",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "f982ce10-b91c-4ae5-8c2d-58f3156bee5c",
+  "name": "New wave gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "new-wave-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/new-wave-gin.png?v=98f9c5a57578",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "e0c5654d-f3ed-4a04-8ec5-e7f07846aaef",
+  "name": "Ginger Beer",
+  "category": "Ginger Mixers",
+  "groupCategory": "Mixers & Sodas",
+  "slug": "ginger-beer",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-beer.png?v=ff576bfbd031",
+  "pageId": "fbdd69a5-cf98-4567-90c1-436b3d1880be",
+  "isSavedByUser": false
+ },
+ {
+  "id": "c0e8db13-836c-453f-870c-14f26a1c26c5",
+  "name": "Ginger Ale",
+  "category": "Ginger Mixers",
+  "groupCategory": "Mixers & Sodas",
+  "slug": "ginger-ale",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-ale.png?v=a42ba85cc2cb",
+  "pageId": "ee9e1ab1-7453-4920-b2f8-0410a90151a5",
+  "isSavedByUser": false
+ },
+ {
+  "id": "ef2ffc76-6137-4615-ac7a-1205c792fea1",
+  "name": "London dry gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "london-dry-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/london-dry-gin.png?v=d33cf51eef8e",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "f4510c7f-9101-494c-ae3c-8b029a168053",
+  "name": "Ginger root",
+  "category": "Vegetables",
+  "groupCategory": "Fresh Fruits & Produce",
+  "slug": "ginger-root",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-root.png?v=19fad62d7cd9",
+  "pageId": "4bc2a10a-d5c3-49eb-a600-09809f8f5241",
+  "isSavedByUser": false
+ },
+ {
+  "id": "9cba7917-e401-4b10-a30d-f7963c2eee77",
+  "name": "Gingerbread",
+  "category": "Flavored Syrups",
+  "groupCategory": "Syrups & Sweeteners",
+  "slug": "gingerbread",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/gingerbread.png?v=bd8fb7f878bd",
+  "pageId": "efc7684e-f95f-4d52-a6a5-13e7df5a1daa",
+  "isSavedByUser": false
+ },
+ {
+  "id": "91258197-910b-402c-a250-49d338b6a59e",
+  "name": "Sage infused gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "sage-infused-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/sage-infused-gin.png?v=1968070f65f2",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "aebda0a0-ca57-498d-96ba-5aa4bfa82fed",
+  "name": "Navy strength gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "navy-strength-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/navy-strength-gin.png?v=ae63928e3d1b",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "a8540fc7-2200-4936-9042-a3244a21edf7",
+  "name": "Cherry infused gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "cherry-infused-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/cherry-infused-gin.png?v=671da7f3b7ce",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "3a2390a1-0c89-4fb4-a7a3-e7e9782a4788",
+  "name": "Ginger liqueur",
+  "category": "Botanical",
+  "groupCategory": "Liqueurs & Cordials",
+  "slug": "ginger-liqueur",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-liqueur.png?v=d5cf2bc6cdb6",
+  "pageId": "df94dc5a-0dc5-4326-8a1e-3bcb0447965e",
+  "isSavedByUser": false
+ },
+ {
+  "id": "4f768273-e600-4409-ac40-0f380b56616e",
+  "name": "Ginger bitters",
+  "category": null,
+  "groupCategory": "Bitters",
+  "slug": "ginger-bitters",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-bitters.png?v=809ca6f76bbc",
+  "pageId": "ba0ffa52-9872-4c3d-a314-487a4cbecc91",
+  "isSavedByUser": false
+ },
+ {
+  "id": "829384c9-813f-4806-9f20-7a1fb132dbbd",
+  "name": "Ginger Cordial",
+  "category": "Citrus Juices",
+  "groupCategory": "Juices & Purees",
+  "slug": "ginger-cordial",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-cordial.png?v=fedaf6dfcc09",
+  "pageId": null,
+  "isSavedByUser": false
+ },
+ {
+  "id": "27730527-3e13-4fbf-9adc-1776ae7feea1",
+  "name": "Ginseng liqueur",
+  "category": "Botanical",
+  "groupCategory": "Liqueurs & Cordials",
+  "slug": "ginseng-liqueur",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginseng-liqueur.png?v=21636a33457e",
+  "pageId": null,
+  "isSavedByUser": false
+ },
+ {
+  "id": "f98b01e9-1711-42cd-82e7-2a780e4ad9e6",
+  "name": "Grapefruit infused gin",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "grapefruit-infused-gin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/grapefruit-infused-gin.png?v=f969732355e5",
+  "pageId": "e4f11291-c0d6-43da-8fcf-cd2132d71f06",
+  "isSavedByUser": false
+ },
+ {
+  "id": "e8137b3b-0ba6-4cdc-9818-08050117dff4",
+  "name": "Cumin",
+  "category": "Spices",
+  "groupCategory": "Herbs & Spices",
+  "slug": "cumin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/cumin.png?v=ee31a4ffb9b6",
+  "pageId": null,
+  "isSavedByUser": false
+ },
+ {
+  "id": "22339669-08c9-4c03-ae50-04f0481f8f25",
+  "name": "Gomme",
+  "category": "Simple Syrups",
+  "groupCategory": "Syrups & Sweeteners",
+  "slug": "gomme",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/gomme.png?v=24ce2b0b7527",
+  "pageId": "86a07f08-c32e-4d8f-bba3-d7308585173d",
+  "isSavedByUser": false
+ },
+ {
+  "id": "d51c4854-ff62-4f4c-978c-5f91012ee78d",
+  "name": "Grappa",
+  "category": "Brandy",
+  "groupCategory": "Base Spirits",
+  "slug": "grappa",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/grappa.png?v=1023bb9fc650",
+  "pageId": "e453f538-2bd1-4f79-a02f-15f040eed9d6",
+  "isSavedByUser": false
+ },
+ {
+  "id": "cec3103c-bbc2-45d3-b974-98b7c6f4dc39",
+  "name": "Poitin",
+  "category": "Vodka",
+  "groupCategory": "Base Spirits",
+  "slug": "poitin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/poitin.png?v=af0d77fc2838",
+  "pageId": null,
+  "isSavedByUser": false
+ },
+ {
+  "id": "baca9f7e-6852-4488-9ed6-ca5f2a4106bb",
+  "name": "Raisin",
+  "category": "Flavored Syrups",
+  "groupCategory": "Syrups & Sweeteners",
+  "slug": "raisin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/raisin.png?v=b7cae9259dd8",
+  "pageId": null,
+  "isSavedByUser": false
+ },
+ {
+  "id": "c5941e1e-8bd5-4b9a-9071-8a0da5632044",
+  "name": "Fortified ginger wine",
+  "category": "Fortified wine",
+  "groupCategory": "Fortified & Aromatized Wines",
+  "slug": "fortified-ginger-wine",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/fortified-ginger-wine.png?v=a2a4d9cccc18",
+  "pageId": "53484021-7fc5-4d00-ad98-4ed5b66ea4d5",
+  "isSavedByUser": false
+ },
+ {
+  "id": "2b2eadc4-5e29-43ac-8b51-a8d4e6fb150e",
+  "name": "Pumpkin",
+  "category": "Flavored Syrups",
+  "groupCategory": "Syrups & Sweeteners",
+  "slug": "pumpkin",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/pumpkin.png?v=8c555e5a96ba",
+  "pageId": "34e37205-3cf0-4724-8f09-4d2ac26c21ce",
+  "isSavedByUser": false
+ },
+ {
+  "id": "f0e9282c-d2d9-4731-8815-92b7a7ff0424",
+  "name": "Genever",
+  "category": "Gin",
+  "groupCategory": "Base Spirits",
+  "slug": "genever",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/genever.png?v=c671c0becefd",
+  "pageId": "dfe4ee74-6553-4d01-84d4-dbfc72cfe404",
+  "isSavedByUser": false
+ },
+ {
+  "id": "62d57b98-6176-42c7-af50-3a0299e304bd",
+  "name": "Ginger & lemongrass cordial",
+  "category": "Botanical",
+  "groupCategory": "Liqueurs & Cordials",
+  "slug": "ginger-and-lemongrass-cordial",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-and-lemongrass-cordial.png?v=880251b3094b",
+  "pageId": null,
+  "isSavedByUser": false
+ },
+ {
+  "id": "3840922b-6763-4e8f-9ac2-c310a13bc05b",
+  "name": "Gold rum",
+  "category": "Rum",
+  "groupCategory": "Base Spirits",
+  "slug": "gold-rum",
+  "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/gold-rum.png?v=308f86cd3368",
+  "pageId": "b1082b4b-dc8f-4202-bbd8-691c54ea1d57",
+  "isSavedByUser": false
+ }
+]

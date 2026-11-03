@@ -1,0 +1,180 @@
+{
+ "isLocked": false,
+ "id": "48f9890e-b511-4027-b832-40cb7fe6a967",
+ "name": "Grapefruit Mule",
+ "slug": "grapefruit-mule",
+ "description": "A refreshing and citrusy twist on the classic Moscow Mule, featuring grapefruit vodka and ginger beer.",
+ "category": "Contemporary_Classic",
+ "cuisine": "American",
+ "imageUrl": "https://images.fixmeadrinkapp.com/cocktail-images/3743-Grapefruit_Mule.jpeg",
+ "imageAlt": "Grapefruit Mule Cocktail",
+ "baseSpirit": "Vodka",
+ "difficulty": "Beginner",
+ "totalTime": 5,
+ "strengthLevel": "Medium",
+ "flavorNotes": [
+  "Citrusy",
+  "Fruity"
+ ],
+ "instructions": [
+  {
+   "id": "f0f8712c-7341-4a44-b4ca-1a6ba38582df",
+   "step": 1,
+   "text": "Select and pre-chill a Collins glass.",
+   "tip": "",
+   "cocktailId": "48f9890e-b511-4027-b832-40cb7fe6a967",
+   "linkedText": "Select and pre-chill a Collins glass."
+  },
+  {
+   "id": "16b26d78-7b08-4ebc-9a21-25f93a6a53d1",
+   "step": 2,
+   "text": "Prepare garnish of grapefruit wedge.",
+   "tip": "Use fresh grapefruit for the best flavor.",
+   "cocktailId": "48f9890e-b511-4027-b832-40cb7fe6a967",
+   "linkedText": "Prepare garnish of grapefruit wedge."
+  },
+  {
+   "id": "64764a9a-7da2-4b1d-85b4-9e9a39cd1509",
+   "step": 3,
+   "text": "POur all ingredients into ice-filled glass.",
+   "tip": "",
+   "cocktailId": "48f9890e-b511-4027-b832-40cb7fe6a967",
+   "linkedText": "POur all ingredients into ice-filled glass."
+  },
+  {
+   "id": "fad29fa3-c83e-4732-92fe-8fdbddee3211",
+   "step": 4,
+   "text": "Briefly stir.",
+   "tip": "Stir gently to mix, preserving carbonation of ginger beer.",
+   "cocktailId": "48f9890e-b511-4027-b832-40cb7fe6a967",
+   "linkedText": "Briefly stir."
+  }
+ ],
+ "ingredients": [
+  {
+   "id": "ea8d0c0d-a808-45e1-b5b8-5e25fd2b3eb0",
+   "cocktailId": "48f9890e-b511-4027-b832-40cb7fe6a967",
+   "ingredientId": "f17ceaeb-72f5-4c02-b44d-a18c29aa1e2b",
+   "amount": 1.5,
+   "unit": "shot",
+   "optional": false,
+   "substitutes": [],
+   "ingredient": {
+    "id": "f17ceaeb-72f5-4c02-b44d-a18c29aa1e2b",
+    "groupCategory": "Base Spirits",
+    "category": "Vodka",
+    "name": "Citrus vodka",
+    "slug": "citrus-vodka",
+    "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/citrus-vodka.png?v=f057a4fcf597",
+    "pageId": "68254cb4-8888-4167-936b-1efd08e305ae"
+   }
+  },
+  {
+   "id": "5a68ddfe-c60f-4a22-aaae-146c5cd96b99",
+   "cocktailId": "48f9890e-b511-4027-b832-40cb7fe6a967",
+   "ingredientId": "db6f5a4b-2c6a-4479-9ffa-0fd2650fc8e4",
+   "amount": 0.5,
+   "unit": "shot",
+   "optional": false,
+   "substitutes": [],
+   "ingredient": {
+    "id": "db6f5a4b-2c6a-4479-9ffa-0fd2650fc8e4",
+    "groupCategory": "Juices & Purees",
+    "category": "Citrus Juices",
+    "name": "Lime Juice",
+    "slug": "lime-juice",
+    "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/lime-juice.png?v=7215ba757736",
+    "pageId": "87c529e4-f3bd-462f-92f2-044052a017ff"
+   }
+  },
+  {
+   "id": "cf58a04f-1206-4cd4-846e-dac9944d0aa6",
+   "cocktailId": "48f9890e-b511-4027-b832-40cb7fe6a967",
+   "ingredientId": "e0c5654d-f3ed-4a04-8ec5-e7f07846aaef",
+   "amount": null,
+   "unit": "Top up with",
+   "optional": false,
+   "substitutes": [],
+   "ingredient": {
+    "id": "e0c5654d-f3ed-4a04-8ec5-e7f07846aaef",
+    "groupCategory": "Mixers & Sodas",
+    "category": "Ginger Mixers",
+    "name": "Ginger Beer",
+    "slug": "ginger-beer",
+    "imageUrl": "https://images.fixmeadrinkapp.com/ingredient-images/ginger-beer.png?v=ff576bfbd031",
+    "pageId": "fbdd69a5-cf98-4567-90c1-436b3d1880be"
+   }
+  }
+ ],
+ "equipment": [
+  "ShakerTin",
+  "MixingGlass",
+  "BarSpoon",
+  "Jigger"
+ ],
+ "equipmentItems": [
+  {
+   "key": "ShakerTin",
+   "label": "Shaker Tin",
+   "termSlug": "cocktail-shaker"
+  },
+  {
+   "key": "MixingGlass",
+   "label": "Mixing Glass",
+   "termSlug": "mixing-glass"
+  },
+  {
+   "key": "BarSpoon",
+   "label": "Bar Spoon",
+   "termSlug": "bar-spoon"
+  },
+  {
+   "key": "Jigger",
+   "label": "Jigger",
+   "termSlug": "jigger"
+  }
+ ],
+ "servingDetails": {
+  "glassware": {
+   "key": "Collins",
+   "label": "Collins",
+   "termSlug": "collins-glass"
+  },
+  "ice": {
+   "key": "RegularCubes",
+   "label": "Regular Cubes",
+   "termSlug": null
+  },
+  "temperature": {
+   "key": "Chilled",
+   "label": "Chilled",
+   "termSlug": null
+  }
+ },
+ "linkTargets": {
+  "terms": {},
+  "ingredients": {}
+ },
+ "glassware": "Collins",
+ "ice": "Regular Cubes",
+ "garnish": "Grapefruit wedge",
+ "temperature": "Chilled",
+ "calories": "100-150",
+ "alcoholVolumePercentage": 6,
+ "pureAlcoholContent": 12.6,
+ "restrictions": [],
+ "reviews": {
+  "averageRating": 4.5,
+  "totalReviews": 50,
+  "distribution": {
+   "1": 0,
+   "2": 0,
+   "3": 11,
+   "4": 22,
+   "5": 17
+  }
+ },
+ "userReviewRating": null,
+ "isSaved": false,
+ "collections": []
+}

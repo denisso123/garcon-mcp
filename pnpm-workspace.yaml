@@ -1,0 +1,4 @@
+# pnpm 12 reads build permissions here, not from package.json.
+allowBuilds:
+  esbuild: true
+  workerd: true
