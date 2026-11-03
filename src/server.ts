@@ -21,7 +21,7 @@ import { WIDGET_URI, widgetHtml } from './widget'
 /** Which host a route serves. Only ChatGPT gets a ui.domain (see README). */
 export type HostProfile = 'default' | 'chatgpt'
 
-const INSTRUCTIONS = `Ask Garçon looks up cocktails in the Garçon recipe catalogue (fixmeadrinkapp.com). For these four requests, call the matching tool instead of answering from memory or web search, because their results come from the catalogue and link to the matching fixmeadrinkapp.com page:
+const INSTRUCTIONS = `Ask Garçon looks up cocktails in the Garçon recipe catalogue (fixmeadrinkapp.com). For catalogue-backed answers to the following requests, call the matching tool: these tools return recipe, ingredient or glossary information with links to the corresponding fixmeadrinkapp.com pages.
 - The user lists ingredients or bottles they have and asks what they can make: find_cocktails_by_ingredients. It checks catalogue matches against their bar, says what each returned drink is missing and links each recipe.
 - The user asks how to make a cocktail they name, or for its recipe: get_cocktail_recipe.
 - The user asks what a spirit, liqueur, mixer or other ingredient is, what to use instead of one, or what a bar term or technique means: explain_bar_term.
