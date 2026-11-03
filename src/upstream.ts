@@ -129,20 +129,27 @@ function backoffMs() {
  * about 0.75 MB today, so the cap only stops a malformed or runaway answer.
  */
 async function readCapped(response: Response, maxBytes: number): Promise<string> {
-  if (Number(response.headers.get('content-length')) > maxBytes) throw new UpstreamError(UNAVAILABLE)
+  if (Number(response.headers.get('content-length')) > maxBytes) {
+    await cancelBody(response.body)
+    throw new UpstreamError(UNAVAILABLE)
+  }
   if (!response.body) return ''
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    size += value.byteLength
-    if (size > maxBytes) {
-      reader.cancel().catch(() => undefined)
-      throw new UpstreamError(UNAVAILABLE)
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined)
+        throw new UpstreamError(UNAVAILABLE)
+      }
+      chunks.push(value)
     }
-    chunks.push(value)
+  } finally {
+    reader.releaseLock()
   }
   const bytes = new Uint8Array(size)
   let offset = 0
@@ -151,6 +158,15 @@ async function readCapped(response: Response, maxBytes: number): Promise<string>
     offset += chunk.byteLength
   }
   return new TextDecoder().decode(bytes)
+}
+
+/** Cancels an unread body; a locked or errored body is left to the runtime. */
+async function cancelBody(body: ReadableStream | null) {
+  try {
+    await body?.cancel()
+  } catch {
+    // Nothing more to free.
+  }
 }
 
 /** The API wraps every answer as { success, responseObject }. */

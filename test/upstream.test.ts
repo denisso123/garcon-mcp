@@ -91,8 +91,11 @@ describe('upstream failures', () => {
   it('loads at most 10 catalogue pages, whatever totalPages says', async () => {
     const h = setup(new FakeApi(bourbonBar()), worker)
     h.api.override('/cocktails?', () => envelope({ cocktails: [], totalPages: 1_000_000_000, total: 0 }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await tool(h, 'get_cocktail_recipe', RECIPE)
     expect(h.api.callsTo('/cocktails?')).toHaveLength(10)
+    expect(warn).toHaveBeenCalledWith('garcon-mcp: catalogue truncated', { totalPages: 1_000_000_000, cap: 10 })
+    warn.mockRestore()
   })
 
   it('reads a missing or malformed totalPages as one page', () => {
@@ -111,10 +114,16 @@ describe('upstream failures', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
-  it('refuses a declared content-length over the byte cap before reading the body', async () => {
-    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200, headers: { 'content-length': '5000' } }))
+  it('refuses a declared content-length over the byte cap, cancelling the unread body', async () => {
+    const pull = vi.fn()
+    const cancel = vi.fn()
+    const stream = new ReadableStream<Uint8Array>({ pull, cancel }, { highWaterMark: 0 })
+    const fetchSpy = vi.fn(async () => new Response(stream, { status: 200, headers: { 'content-length': '101' } }))
     vi.stubGlobal('fetch', fetchSpy)
     await expect(upstreamWith({ maxResponseBytes: 100 }).get('/declared', 60)).rejects.toThrow(/not answering/)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(pull).not.toHaveBeenCalled()
+    expect(cancel).toHaveBeenCalledTimes(1)
   })
 
   it('accepts a body at the byte cap, split across chunks', async () => {

@@ -47,6 +47,7 @@ const CATALOGUE_TTL = 12 * HOUR
 const CATALOGUE_PAGE_SIZE = 2000
 // The live catalogue has 3 pages (Nov 2026); 10 leaves room to grow.
 const MAX_CATALOGUE_PAGES = 10
+let warnedTruncated = false
 
 const MAX_TERMS = 25
 const MAX_SEARCHES = 8
@@ -79,8 +80,14 @@ async function loadCatalogue(up: Upstream): Promise<RawPreview[]> {
     `/cocktails?page=${page}&pageSize=${CATALOGUE_PAGE_SIZE}&sortBy=popularityScore&sortOrder=desc`
   const first = await up.get<RawRecipeList>(path(1), CATALOGUE_TTL)
   if (!first) return []
+  const pages = cataloguePages(first.totalPages)
+  if (first.totalPages > MAX_CATALOGUE_PAGES && !warnedTruncated) {
+    // Once per isolate, so a large catalogue shows in Worker logs without flooding them.
+    warnedTruncated = true
+    console.warn('garcon-mcp: catalogue truncated', { totalPages: first.totalPages, cap: MAX_CATALOGUE_PAGES })
+  }
   const rest = await Promise.all(
-    Array.from({ length: cataloguePages(first.totalPages) - 1 }, (_, i) =>
+    Array.from({ length: pages - 1 }, (_, i) =>
       up.get<RawRecipeList>(path(i + 2), CATALOGUE_TTL)
     )
   )
