@@ -1,0 +1,10 @@
+{
+  "name": "ask-garcon",
+  "version": "1.0.0",
+  "description": "Cocktails from the bottles you own: recipes, bar terms, similar drinks, low and zero-proof picks.",
+  "mcpServers": {
+    "ask-garcon": {
+      "httpUrl": "https://mcp.fixmeadrinkapp.com/mcp"
+    }
+  }
+}
